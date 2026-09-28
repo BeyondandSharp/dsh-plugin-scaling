@@ -1,0 +1,9 @@
+# pane-scaling plugin bundle patch: inserts its public dsh.client entry into the web plugin roster.
+# Install with `dsh plugin --profile <name> add <path-or-git-url>`.
+#
+# The row id must NOT start with `ui-skin-`: dsh-deep-whale's skin manager owns every
+# `ui-skin-*` row (see skin-manager/src/index.ts ownsRecord) and would rewrite or disable it
+# while switching skins. A plain plugin id stays under the user's control in the Plugins page.
+- insert:
+    - id: ui-plugin-scaling
+      name: '@beyondandsharp/dsh-plugin-scaling'

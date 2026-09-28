@@ -1,0 +1,129 @@
+/** Shared jsdom fixtures: the host's three-column shell with optional decoration. */
+import { PANE_IDS } from '../../src/client/targets.ts'
+
+/** Fixture variations exercised by the specs. */
+export interface ShellOptions {
+  /** Insert a skin-style decorative node ahead of the real content root. */
+  skin?: boolean
+  /** Omit the right column, as when the right bar is closed. */
+  withoutRight?: boolean
+  /** Include a second, unselected dock cell. */
+  secondDockPane?: boolean
+  /** Put an xterm screen inside the right dock pane. */
+  withTerminal?: boolean
+}
+
+/** Query a required element, throwing with the selector when absent. */
+export function element<T extends Element = HTMLElement>(root: ParentNode, selector: string): T {
+  const found = root.querySelector<T>(selector)
+  if (found === null) throw new Error(`fixture element not found: ${selector}`)
+  return found
+}
+
+/** Every element the plugin marked, grouped by pane. */
+export function marked(root: ParentNode): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  for (const pane of PANE_IDS) {
+    out[pane] = [...root.querySelectorAll(`[data-pane-scaling-target='${pane}']`)].map(node => node.className)
+  }
+  return out
+}
+
+function decoration(doc: Document, className: string): HTMLDivElement {
+  const node = doc.createElement('div')
+  node.className = className
+  return node
+}
+
+function dockCell(doc: Document, options: { selected: boolean, terminal?: boolean }): HTMLDivElement {
+  const cell = doc.createElement('div')
+  cell.className = 'dk_tabCell'
+  cell.setAttribute('data-dockkit-host', 'dock')
+  if (!options.selected) cell.hidden = true
+  const section = doc.createElement('section')
+  section.className = 'dk_tabHost dk_pane'
+  section.tabIndex = -1
+  if (options.selected) section.setAttribute('data-dockkit-pane', 'pane-a')
+  const header = doc.createElement('div')
+  header.className = 'dk_tabHostHeader'
+  const body = doc.createElement('div')
+  body.className = 'dk_paneBody'
+  if (options.terminal === true) {
+    const terminal = doc.createElement('div')
+    terminal.className = 'xterm'
+    body.append(terminal)
+  }
+  section.append(header, body)
+  cell.append(section)
+  return cell
+}
+
+/**
+ * Replace the document body with a shell shaped like the host's AppFrame:
+ * three grid columns, `display: contents` slot seams, and a docked right pane.
+ * @param doc - the jsdom document.
+ * @param options - fixture variations.
+ * @returns the frame element.
+ */
+export function buildShell(doc: Document, options: ShellOptions = {}): HTMLElement {
+  doc.body.innerHTML = ''
+  const frame = doc.createElement('div')
+  frame.className = 'frame'
+
+  const sidebarCol = doc.createElement('div')
+  sidebarCol.className = 'af_sidebarCol'
+  if (options.skin === true) sidebarCol.append(decoration(doc, 'sk_ornament'))
+  const sidebarSlot = doc.createElement('div')
+  sidebarSlot.setAttribute('data-slot', 'sidebar')
+  sidebarSlot.style.display = 'contents'
+  const sidebarRoot = doc.createElement('div')
+  sidebarRoot.className = 'sb_root'
+  const search = doc.createElement('input')
+  search.setAttribute('data-slot', 'sidebar.settings')
+  sidebarRoot.append(search)
+  sidebarSlot.append(sidebarRoot)
+  sidebarCol.append(sidebarSlot)
+
+  const centerCol = doc.createElement('div')
+  centerCol.className = 'af_centerCol'
+  const conversationRoot = doc.createElement('div')
+  conversationRoot.className = 'cv_root'
+  const scroll = doc.createElement('div')
+  scroll.setAttribute('data-conversation-scroll', '')
+  const composer = doc.createElement('textarea')
+  scroll.append(composer)
+  conversationRoot.append(scroll)
+  centerCol.append(conversationRoot)
+
+  frame.append(sidebarCol, centerCol)
+
+  if (options.withoutRight !== true) {
+    const rightbarCol = doc.createElement('div')
+    rightbarCol.className = 'af_rightbarCol'
+    const panel = doc.createElement('div')
+    panel.className = 'sr_panel'
+    panel.style.width = '320px'
+    const panelBody = doc.createElement('div')
+    panelBody.className = 'sr_panelBody'
+    const tabLayout = doc.createElement('div')
+    tabLayout.className = 'dk_tabLayout'
+    tabLayout.append(dockCell(doc, { selected: true, ...(options.withTerminal === true ? { terminal: true } : {}) }))
+    if (options.secondDockPane === true) tabLayout.append(dockCell(doc, { selected: false }))
+    const floatCell = doc.createElement('div')
+    floatCell.className = 'dk_tabCell dk_floatingCell'
+    floatCell.setAttribute('data-dockkit-host', 'float')
+    const floatSection = doc.createElement('section')
+    floatSection.className = 'dk_tabHost dk_float'
+    floatSection.setAttribute('data-dockkit-float', 'pane-f')
+    floatSection.style.position = 'fixed'
+    floatCell.append(floatSection)
+    tabLayout.append(floatCell)
+    panelBody.append(tabLayout)
+    panel.append(panelBody)
+    rightbarCol.append(panel)
+    frame.append(rightbarCol)
+  }
+
+  doc.body.append(frame)
+  return frame
+}

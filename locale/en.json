@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Pane Scaling",
+    "description": "Independent zoom for the left sidebar, the center window and the right sidebar: Ctrl+wheel scales the pane under the pointer, Ctrl+± / Ctrl+0 the focused pane. Works with the official look and every skin."
+  }
+}
