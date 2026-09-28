@@ -1,8 +1,8 @@
 /** Pane target resolution and the incremental mark lease. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  FIXED_OVERLAY_ATTRIBUTE, TARGET_ATTRIBUTE, clearTargetMarks, isExcludedSurface, paneOfNode,
-  resolvePaneTargets, syncTargetMarks,
+  FIXED_OVERLAY_ATTRIBUTE, TARGET_ATTRIBUTE, clearTargetMarks, hasInlinePixelWidth, isExcludedSurface,
+  paneOfNode, resolvePaneTargets, syncTargetMarks,
 } from '../src/client/targets.ts'
 import { buildShell, element } from './helpers/dom.ts'
 
@@ -107,6 +107,25 @@ describe('syncTargetMarks', () => {
     clearTargetMarks(owned)
     expect(document.querySelectorAll(`[${TARGET_ATTRIBUTE}]`)).toHaveLength(0)
     expect(foreign.hasAttribute(FIXED_OVERLAY_ATTRIBUTE)).toBe(true)
+  })
+})
+
+describe('hasInlinePixelWidth', () => {
+  /** Apply an inline width and report the predicate. */
+  const detects = (value: string): boolean => {
+    const element = document.createElement('div')
+    if (value !== '') element.style.width = value
+    return hasInlinePixelWidth(element)
+  }
+
+  it('detects the frozen px width the left sidebar keeps', () => {
+    expect(detects('320px')).toBe(true)
+    expect(detects('320.5px')).toBe(true)
+    expect(detects('100%')).toBe(false)
+    expect(detects('auto')).toBe(false)
+    expect(detects('calc(100% / 1.5)')).toBe(false)
+    expect(detects('2rem')).toBe(false)
+    expect(detects('')).toBe(false)
   })
 })
 

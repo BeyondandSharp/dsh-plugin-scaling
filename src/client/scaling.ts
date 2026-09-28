@@ -7,7 +7,8 @@
  */
 import { createBadge } from './badge.ts'
 import {
-  FIXED_ATTRIBUTE, FILL_ATTRIBUTE, calibrate, clearFixedOverlays, domProbeEnvironment, syncFixedOverlays,
+  FIXED_ATTRIBUTE, FILL_ATTRIBUTE, calibrate, clearFixedOverlays, domProbeEnvironment, fillPaneAttribute,
+  syncFixedOverlays,
 } from './calibration.ts'
 import type { FillMode, FixedMode, ProbeEnvironment } from './calibration.ts'
 import { copyFor } from './copy.ts'
@@ -18,7 +19,7 @@ import {
 } from './storage.ts'
 import type { ZoomSteps } from './storage.ts'
 import {
-  PANE_IDS, clearTargetMarks, isExcludedSurface, isPaneStructureChange, paneOfNode,
+  PANE_IDS, clearTargetMarks, hasInlinePixelWidth, isExcludedSurface, isPaneStructureChange, paneOfNode,
   resolvePaneTargets, syncTargetMarks,
 } from './targets.ts'
 import type { PaneId } from './targets.ts'
@@ -132,6 +133,31 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
   let marks = new Map<HTMLElement, PaneId>()
   let overlays = new Set<HTMLElement>()
 
+  /**
+   * Force the width compensation for a pane whose root carries an explicit
+   * inline px width (the left sidebar freezes its expanded width that way).
+   * A px width is scaled by `zoom` under every engine's semantics, so this is an
+   * element fact rather than the engine-wide `fill` verdict the probe measures.
+   */
+  const forcedFill = new Set<PaneId>()
+  const refreshForcedFill = (): void => {
+    for (const pane of PANE_IDS) {
+      const root = [...marks].find(([, value]) => value === pane)?.[0]
+      const forced = root !== undefined && hasInlinePixelWidth(root)
+      const name = fillPaneAttribute(pane)
+      if (forced) {
+        if (!forcedFill.has(pane)) forcedFill.add(pane)
+        setAttribute(target, name, 'compensated')
+      } else {
+        forcedFill.delete(pane)
+        if (target.getAttribute(name) !== null) target.removeAttribute(name)
+      }
+    }
+  }
+  undo.push(() => {
+    for (const pane of PANE_IDS) target.removeAttribute(fillPaneAttribute(pane))
+  })
+
   const resizeObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => { scheduleSync() })
   const observer = typeof MutationObserver === 'undefined'
     ? undefined
@@ -156,6 +182,7 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
     overlays = fixed === 'native'
       ? overlays
       : syncFixedOverlays(overlays, [...marks.keys()], view)
+    refreshForcedFill()
     observeRoots()
   }
 
@@ -209,6 +236,9 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
     if (next === steps[pane]) return
     steps[pane] = next
     apply(pane, next)
+    // The host can (re)write its frozen inline width on any render, so the
+    // forced gate is re-evaluated on every change instead of only on structure.
+    refreshForcedFill()
     writeZoom(store, steps)
     badge.show(pane, stepToZoom(next))
     if (!calibrated && next !== DEFAULT_STEP) runCalibration(pane)

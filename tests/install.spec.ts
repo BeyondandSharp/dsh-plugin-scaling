@@ -1,6 +1,6 @@
 /** Engine assembly, gestures end to end, calibration wiring, and teardown. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FILL_ATTRIBUTE, FIXED_ATTRIBUTE } from '../src/client/calibration.ts'
+import { FILL_ATTRIBUTE, FIXED_ATTRIBUTE, fillPaneAttribute } from '../src/client/calibration.ts'
 import type { ProbeEnvironment, RectLike } from '../src/client/calibration.ts'
 import {
   ACTIVE_ATTRIBUTE, counterVariable, installPaneScaling, originXVariable, originYVariable, zoomVariable,
@@ -258,6 +258,20 @@ describe('keyboard', () => {
 })
 
 describe('calibration wiring', () => {
+  it('forces the width compensation for a pane whose root keeps a px width', () => {
+    harness = activate({}, () => { element(document, '.sb_root').style.width = '320px' })
+    expect(document.body.getAttribute(fillPaneAttribute('left'))).toBe('compensated')
+    expect(document.body.getAttribute(fillPaneAttribute('center'))).toBeNull()
+    expect(document.body.getAttribute(fillPaneAttribute('right'))).toBeNull()
+    // A host re-render that drops the frozen width releases the pane again.
+    element(document, '.sb_root').style.removeProperty('width')
+    wheel(element(document, '.cv_root'))
+    expect(document.body.getAttribute(fillPaneAttribute('left'))).toBeNull()
+    harness.dispose()
+    harness = undefined
+    expect(document.body.getAttribute(fillPaneAttribute('left'))).toBeNull()
+  })
+
   it('switches both body gates to the measured branches', () => {
     buildShell(document)
     const root = element(document, '.sb_root')

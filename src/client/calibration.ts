@@ -21,6 +21,15 @@ export const FILL_ATTRIBUTE = 'data-pane-scaling-fill'
 /** Body attribute carrying the fixed-positioning branch. */
 export const FIXED_ATTRIBUTE = 'data-pane-scaling-fixed'
 
+/**
+ * Per-pane fill gate forced by an explicit inline px width on that pane's root.
+ * It is an element property, not an engine one, so it is written per pane and
+ * only when it applies.
+ * @param subject - the pane whose root carries the px width.
+ * @returns the body attribute name.
+ */
+export const fillPaneAttribute = (subject: string): string => `data-pane-scaling-fill-${subject}`
+
 /** Content root grows with the zoom and needs a width compensation. */
 export type FillMode = 'fluid' | 'compensated'
 

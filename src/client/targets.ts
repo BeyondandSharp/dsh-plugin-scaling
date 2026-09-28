@@ -77,6 +77,22 @@ export function hasLayoutBox(element: Element): boolean {
 }
 
 /**
+ * Whether the element carries an explicit inline width in px.
+ *
+ * The left sidebar root freezes its expanded width inline
+ * (`SidebarRoot.tsx`: `style={{ width }}`) so the collapse slide does not
+ * reflow its content. An explicit px width is scaled by `zoom` under every
+ * engine's semantics — unlike a percentage or `auto` width — so such a root
+ * always needs the width compensation, independent of any measurement.
+ * @param element - candidate zoom target.
+ * @returns true for `width: <number>px` in the element's own inline style.
+ */
+export function hasInlinePixelWidth(element: Element): boolean {
+  const width = (element as HTMLElement).style?.getPropertyValue('width').trim()
+  return width !== '' && /^\d+(?:\.\d+)?px$/u.test(width)
+}
+
+/**
  * Descend through `display: contents` seams to the first node with a real box.
  * @param element - start node (usually a column's direct child).
  * @returns the first boxed element, or undefined when the subtree is empty.

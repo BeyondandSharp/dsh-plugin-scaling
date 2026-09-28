@@ -41,8 +41,31 @@ body[data-dsh-plugin-scaling] [data-pane-scaling-target='right'] {
  * pulled back to the column's width. `fluid` (the default) needs no rule.
  */
 body[data-dsh-plugin-scaling][data-pane-scaling-fill='compensated'] [data-pane-scaling-target] {
-  width: calc(100% / var(--pane-scaling-own));
-  height: calc(100% / var(--pane-scaling-own));
+  width: calc(100% / var(--pane-scaling-own)) !important;
+  height: calc(100% / var(--pane-scaling-own)) !important;
+}
+
+/*
+ * Element branch: some roots carry an explicit inline `width` in px that they
+ * must keep for their own animation (the left sidebar freezes its expanded
+ * width, `SidebarRoot.tsx`). Inline styles outrank any author rule, and a px
+ * width is scaled by `zoom` under every engine's semantics, so the compensation
+ * has to be `!important` and per pane. These declarations are the only
+ * `!important` in the sheet.
+ */
+body[data-dsh-plugin-scaling][data-pane-scaling-fill-left='compensated'] [data-pane-scaling-target='left'] {
+  width: calc(100% / var(--pane-scaling-own)) !important;
+  height: calc(100% / var(--pane-scaling-own)) !important;
+}
+
+body[data-dsh-plugin-scaling][data-pane-scaling-fill-center='compensated'] [data-pane-scaling-target='center'] {
+  width: calc(100% / var(--pane-scaling-own)) !important;
+  height: calc(100% / var(--pane-scaling-own)) !important;
+}
+
+body[data-dsh-plugin-scaling][data-pane-scaling-fill-right='compensated'] [data-pane-scaling-target='right'] {
+  width: calc(100% / var(--pane-scaling-own)) !important;
+  height: calc(100% / var(--pane-scaling-own)) !important;
 }
 
 /*

@@ -32,6 +32,16 @@ function splitTopLevel(list: string): string[] {
   return parts.map(part => part.trim()).filter(part => part !== '')
 }
 
+/** Every rule and its declarations, comments stripped. */
+function ruleBlocks(source: string): Array<{ selector: string, body: string }> {
+  return [...source.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map(match => ({
+      selector: (match[1] ?? '').replace(/\s+/g, ' ').trim(),
+      body: (match[2] ?? '').replace(/\s+/g, ' ').trim(),
+    }))
+    .filter(rule => rule.selector !== '' && !rule.selector.startsWith('@'))
+}
+
 describe('scoping', () => {
   it('scopes every rule to the activation attribute', () => {
     const lists = selectorLists(css)
@@ -62,6 +72,20 @@ describe('zoom rules', () => {
     expect(css).toContain('height: calc(100% / var(--pane-scaling-own))')
   })
 
+  it('also gates the fill compensation per pane and outranks host inline widths', () => {
+    for (const pane of ['left', 'center', 'right']) {
+      expect(css).toContain(`[data-pane-scaling-fill-${pane}='compensated'] [data-pane-scaling-target='${pane}']`)
+    }
+    // The only !important declarations in the sheet must be fill compensations:
+    // they exist to beat the host's frozen inline px width on a pane root.
+    const withImportant = ruleBlocks(css).filter(rule => rule.body.includes('!important'))
+    expect(withImportant).toHaveLength(4)
+    for (const rule of withImportant) {
+      expect(rule.selector).toContain('data-pane-scaling-fill')
+      expect(rule.body).toContain('calc(100% / var(--pane-scaling-own)) !important')
+    }
+  })
+
   it('gates the fixed-overlay compensation on the calibrated attribute', () => {
     expect(css).toContain("[data-pane-scaling-fixed='scaled']")
     expect(css).toContain("[data-pane-scaling-fixed='contained']")
@@ -78,8 +102,10 @@ describe('zoom rules', () => {
     }
   })
 
-  it('never uses !important', () => {
-    expect(css).not.toContain('!important')
+  it('never leaves an un-gated declaration behind', () => {
+    for (const rule of ruleBlocks(css)) {
+      expect(rule.selector.startsWith('body[data-dsh-plugin-scaling]')).toBe(true)
+    }
   })
 })
 
