@@ -8,7 +8,7 @@
 import { createBadge } from './badge.ts'
 import {
   FIXED_ATTRIBUTE, FILL_ATTRIBUTE, calibrate, clearFixedOverlays, domProbeEnvironment, fillPaneAttribute,
-  syncFixedOverlays,
+  fillWidthVariable, syncFixedOverlays,
 } from './calibration.ts'
 import type { FillMode, FixedMode, ProbeEnvironment } from './calibration.ts'
 import { copyFor } from './copy.ts'
@@ -19,7 +19,7 @@ import {
 } from './storage.ts'
 import type { ZoomSteps } from './storage.ts'
 import {
-  PANE_IDS, clearTargetMarks, hasInlinePixelWidth, isExcludedSurface, isPaneStructureChange, paneOfNode,
+  PANE_IDS, clearTargetMarks, inlinePixelWidth, isExcludedSurface, isPaneStructureChange, paneOfNode,
   resolvePaneTargets, syncTargetMarks,
 } from './targets.ts'
 import type { PaneId } from './targets.ts'
@@ -93,6 +93,9 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
     if (element.style.getPropertyValue(name) === value) return
     element.style.setProperty(name, value)
   }
+  const clearStyle = (element: HTMLElement, name: string): void => {
+    if (element.style.getPropertyValue(name) !== '') element.style.removeProperty(name)
+  }
   const setAttribute = (element: Element, name: string, value: string): void => {
     if (element.getAttribute(name) !== value) element.setAttribute(name, value)
   }
@@ -104,7 +107,8 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
     ...PANE_IDS.map(pane => originXVariable(pane)),
     ...PANE_IDS.map(pane => originYVariable(pane)),
   ]
-  sweepStyles(html, [...zoomNames, ...counterNames, ...originNames])
+  const fillWidthNames = PANE_IDS.map(pane => fillWidthVariable(pane))
+  sweepStyles(html, [...zoomNames, ...counterNames, ...originNames, ...fillWidthNames])
 
   const store = localStorageOf(view)
   const steps: ZoomSteps = readZoom(store)
@@ -134,24 +138,29 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
   let overlays = new Set<HTMLElement>()
 
   /**
-   * Force the width compensation for a pane whose root carries an explicit
-   * inline px width (the left sidebar freezes its expanded width that way).
-   * A px width is scaled by `zoom` under every engine's semantics, so this is an
-   * element fact rather than the engine-wide `fill` verdict the probe measures.
+   * Compensate the width of a pane whose root carries an explicit inline px
+   * width (the left sidebar freezes its expanded width that way, and the value
+   * is the host's own layout intent — it can differ from the column box during
+   * the collapse slide). A px width is scaled by `zoom` under every engine's
+   * semantics, so this is an element fact rather than the engine-wide `fill`
+   * verdict the probe measures: the compensation follows the frozen value
+   * (`frozen / zoom`) instead of a percentage of the containing block.
    */
   const forcedFill = new Set<PaneId>()
   const refreshForcedFill = (): void => {
     for (const pane of PANE_IDS) {
       const root = [...marks].find(([, value]) => value === pane)?.[0]
-      const forced = root !== undefined && hasInlinePixelWidth(root)
+      const frozen = root === undefined ? undefined : inlinePixelWidth(root)
       const name = fillPaneAttribute(pane)
-      if (forced) {
-        if (!forcedFill.has(pane)) forcedFill.add(pane)
-        setAttribute(target, name, 'compensated')
-      } else {
+      if (frozen === undefined) {
         forcedFill.delete(pane)
         if (target.getAttribute(name) !== null) target.removeAttribute(name)
+        clearStyle(html, fillWidthVariable(pane))
+        continue
       }
+      forcedFill.add(pane)
+      setAttribute(target, name, 'compensated')
+      setStyle(html, fillWidthVariable(pane), `${Number((frozen / stepToZoom(steps[pane])).toFixed(3))}px`)
     }
   }
   undo.push(() => {
@@ -162,6 +171,14 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
   const observer = typeof MutationObserver === 'undefined'
     ? undefined
     : new MutationObserver((records) => { if (isPaneStructureChange(records)) scheduleSync() })
+  /**
+   * Watches only the marked roots' inline styles. The sidebar rewrite of its
+   * frozen width — a resize drag, the collapse slide, a layout restore — is an
+   * attribute change, not a childList one, and the compensation has to follow
+   * it live. Scoped to the three roots so the rest of the document's style
+   * churn never reaches this callback.
+   */
+  const rootStyleObserver = typeof MutationObserver === 'undefined' ? undefined : new MutationObserver(() => { scheduleSync() })
 
   const refreshOrigins = (): void => {
     if (fixed !== 'contained') return
@@ -174,7 +191,11 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
 
   const observeRoots = (): void => {
     resizeObserver?.disconnect()
-    for (const element of marks.keys()) resizeObserver?.observe(element)
+    rootStyleObserver?.disconnect()
+    for (const element of marks.keys()) {
+      resizeObserver?.observe(element)
+      rootStyleObserver?.observe(element, { attributes: true, attributeFilter: ['style'] })
+    }
   }
 
   const sync = (): void => {
@@ -206,6 +227,7 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
   disposers.push(() => {
     observer?.disconnect()
     resizeObserver?.disconnect()
+    rootStyleObserver?.disconnect()
     view?.removeEventListener('resize', scheduleSync)
   })
 

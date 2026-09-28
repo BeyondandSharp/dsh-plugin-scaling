@@ -59,10 +59,13 @@ dsh plugin --profile web add github:BeyondandSharp/dsh-plugin-scaling
 - 悬停类 Tooltip 气泡由宿主渲染在栏内且不 portal，本插件在**自校准判定需要时**才补偿它的尺寸与原点。
 - **Web 壳的 `Ctrl+±`/`0` 键位固定不可改**：宿主的快捷键服务把 Web 运行时上的 `Ctrl+=` 判为浏览器保留组合（`unsupported-browser`）而拒绝注册，且其物理键白名单不含小键盘 code；本插件因此在 Web 壳使用内置监听（功能完整，只是不出现在「设置 → 快捷键」里）。在 Electron 桌面壳上会注册成三条可改键命令（`pane-scaling.in` / `.out` / `.reset`）。
 - 若将来有别的皮肤或插件也缩放同一批面板，两者的 `zoom` 会**相乘**。
-- 宽度补偿声明带 `!important`（全表仅此一处）：左栏内容根为了折叠动画把展开宽度**内联冻结**成 `width: <px>`
-  （`ui-sidebar` 的 `SidebarRoot`），内联样式优先级高于任何作者规则，不加 `!important` 就补偿不了——
-  表现出来就是缩小后填不满左栏、放大后被左栏的 `overflow: hidden` 截断。px 宽度在任何引擎语义下都会被 `zoom` 放大，
-  所以该补偿按栏强制启用（`body[data-pane-scaling-fill-left]`），与自校准测得的引擎级分支相互独立。
+- 宽度补偿按 **`!important` + 跟随宿主冻结宽度** 实现（全表仅三条 `!important`，各栏一条）：
+  左栏内容根为了折叠动画把展开宽度**内联冻结**成 `width: <px>`（`ui-sidebar` 的 `SidebarRoot`），
+  内联样式优先级高于任何作者规则，不加 `!important` 就补偿不了——表现为缩小后填不满左栏、放大后被左栏的 `overflow: hidden` 截断。
+  px 宽度在任何引擎语义下都会被 `zoom` 放大，所以补偿值取**该栏自己的冻结宽度 ÷ 当前缩放**写入
+  `--pane-scaling-fill-width-<栏>`，而不是取父盒的百分比；因此**拖动左栏宽度把手时内容宽度会实时跟着变**，
+  折叠滑动期间也会沿用宿主自己的冻结宽度，而不是被压成轨道宽。该补偿按栏独立门控
+  （`body[data-pane-scaling-fill-left|center|right]`），与自校准测得的引擎级分支互不影响。
 - 数值是全局按浏览器的，不区分会话、皮肤或窗口。
 
 ## 浏览器支持与自校准

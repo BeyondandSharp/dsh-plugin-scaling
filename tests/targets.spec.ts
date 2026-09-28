@@ -1,8 +1,8 @@
 /** Pane target resolution and the incremental mark lease. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  FIXED_OVERLAY_ATTRIBUTE, TARGET_ATTRIBUTE, clearTargetMarks, hasInlinePixelWidth, isExcludedSurface,
-  paneOfNode, resolvePaneTargets, syncTargetMarks,
+  FIXED_OVERLAY_ATTRIBUTE, TARGET_ATTRIBUTE, clearTargetMarks, hasInlinePixelWidth, inlinePixelWidth,
+  isExcludedSurface, paneOfNode, resolvePaneTargets, syncTargetMarks,
 } from '../src/client/targets.ts'
 import { buildShell, element } from './helpers/dom.ts'
 
@@ -110,7 +110,7 @@ describe('syncTargetMarks', () => {
   })
 })
 
-describe('hasInlinePixelWidth', () => {
+describe('hasInlinePixelWidth / inlinePixelWidth', () => {
   /** Apply an inline width and report the predicate. */
   const detects = (value: string): boolean => {
     const element = document.createElement('div')
@@ -126,6 +126,16 @@ describe('hasInlinePixelWidth', () => {
     expect(detects('calc(100% / 1.5)')).toBe(false)
     expect(detects('2rem')).toBe(false)
     expect(detects('')).toBe(false)
+  })
+
+  it('reads the frozen value the compensation has to follow', () => {
+    const element = document.createElement('div')
+    element.style.width = '320.5px'
+    expect(inlinePixelWidth(element)).toBe(320.5)
+    element.style.width = '480px'
+    expect(inlinePixelWidth(element)).toBe(480)
+    element.style.width = '100%'
+    expect(inlinePixelWidth(element)).toBeUndefined()
   })
 })
 

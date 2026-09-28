@@ -72,17 +72,25 @@ describe('zoom rules', () => {
     expect(css).toContain('height: calc(100% / var(--pane-scaling-own))')
   })
 
-  it('also gates the fill compensation per pane and outranks host inline widths', () => {
+  it('gates the engine fill compensation and keeps it free of !important', () => {
+    const global = ruleBlocks(css).filter(rule => rule.body.includes('calc(100% / var(--pane-scaling-own))'))
+    expect(global).toHaveLength(1)
+    expect(global[0]?.selector).toContain("[data-pane-scaling-fill='compensated']")
+    expect(global[0]?.body).not.toContain('!important')
+  })
+
+  it('follows the host frozen width per pane and outranks it with !important', () => {
     for (const pane of ['left', 'center', 'right']) {
       expect(css).toContain(`[data-pane-scaling-fill-${pane}='compensated'] [data-pane-scaling-target='${pane}']`)
+      expect(css).toContain(`width: var(--pane-scaling-fill-width-${pane}) !important`)
     }
-    // The only !important declarations in the sheet must be fill compensations:
-    // they exist to beat the host's frozen inline px width on a pane root.
+    // The only !important declarations in the sheet are those frozen-width
+    // compensations: they exist to beat the pane root's inline px width.
     const withImportant = ruleBlocks(css).filter(rule => rule.body.includes('!important'))
-    expect(withImportant).toHaveLength(4)
+    expect(withImportant).toHaveLength(3)
     for (const rule of withImportant) {
-      expect(rule.selector).toContain('data-pane-scaling-fill')
-      expect(rule.body).toContain('calc(100% / var(--pane-scaling-own)) !important')
+      expect(rule.selector).toContain('data-pane-scaling-fill-')
+      expect(rule.body).toContain('var(--pane-scaling-fill-width-')
     }
   })
 

@@ -30,6 +30,15 @@ export const FIXED_ATTRIBUTE = 'data-pane-scaling-fixed'
  */
 export const fillPaneAttribute = (subject: string): string => `data-pane-scaling-fill-${subject}`
 
+/**
+ * Inline variable holding the compensated width for a pane whose root freezes
+ * its width in px: the frozen value divided by the pane's current zoom, so the
+ * rendered width stays exactly the host's own width.
+ * @param subject - the pane.
+ * @returns the variable name.
+ */
+export const fillWidthVariable = (subject: string): string => `--pane-scaling-fill-width-${subject}`
+
 /** Content root grows with the zoom and needs a width compensation. */
 export type FillMode = 'fluid' | 'compensated'
 

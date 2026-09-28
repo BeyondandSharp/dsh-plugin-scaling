@@ -1,6 +1,6 @@
 /** Engine assembly, gestures end to end, calibration wiring, and teardown. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FILL_ATTRIBUTE, FIXED_ATTRIBUTE, fillPaneAttribute } from '../src/client/calibration.ts'
+import { FILL_ATTRIBUTE, FIXED_ATTRIBUTE, fillPaneAttribute, fillWidthVariable } from '../src/client/calibration.ts'
 import type { ProbeEnvironment, RectLike } from '../src/client/calibration.ts'
 import {
   ACTIVE_ATTRIBUTE, counterVariable, installPaneScaling, originXVariable, originYVariable, zoomVariable,
@@ -258,18 +258,45 @@ describe('keyboard', () => {
 })
 
 describe('calibration wiring', () => {
-  it('forces the width compensation for a pane whose root keeps a px width', () => {
+  it('follows the frozen px width of a pane root instead of the column box', () => {
     harness = activate({}, () => { element(document, '.sb_root').style.width = '320px' })
     expect(document.body.getAttribute(fillPaneAttribute('left'))).toBe('compensated')
     expect(document.body.getAttribute(fillPaneAttribute('center'))).toBeNull()
     expect(document.body.getAttribute(fillPaneAttribute('right'))).toBeNull()
+    // At 100% the compensation is the frozen value itself.
+    expect(style(fillWidthVariable('left'))).toBe('320px')
+    // Zooming in keeps the rendered width at the frozen value: 320 / 1.05.
+    wheel(element(document, '.sb_root'))
+    expect(style(zoomVariable('left'))).toBe('1.05')
+    expect(style(fillWidthVariable('left'))).toBe('304.762px')
+    // Zooming out follows too: 320 / 0.75 at the low end.
+    for (let index = 0; index < 6; index += 1) wheel(element(document, '.sb_root'), 100)
+    expect(style(zoomVariable('left'))).toBe('0.75')
+    expect(style(fillWidthVariable('left'))).toBe(`${String(Number((320 / 0.75).toFixed(3)))}px`)
     // A host re-render that drops the frozen width releases the pane again.
     element(document, '.sb_root').style.removeProperty('width')
     wheel(element(document, '.cv_root'))
     expect(document.body.getAttribute(fillPaneAttribute('left'))).toBeNull()
+    expect(style(fillWidthVariable('left'))).toBe('')
     harness.dispose()
     harness = undefined
     expect(document.body.getAttribute(fillPaneAttribute('left'))).toBeNull()
+  })
+
+  it('follows a sidebar resize drag without waiting for a zoom step', async () => {
+    harness = activate({}, () => { element(document, '.sb_root').style.width = '320px' })
+    const left = element(document, '.sb_root')
+    // What dragging the sidebar handle does: the host rewrites the frozen width.
+    left.style.width = '400px'
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    harness.flush()
+    expect(style(fillWidthVariable('left'))).toBe('400px')
+    // A collapse that drops the inline width releases the gate again.
+    left.style.removeProperty('width')
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    harness.flush()
+    expect(document.body.getAttribute(fillPaneAttribute('left'))).toBeNull()
+    expect(style(fillWidthVariable('left'))).toBe('')
   })
 
   it('switches both body gates to the measured branches', () => {

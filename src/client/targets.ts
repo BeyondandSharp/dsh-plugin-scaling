@@ -77,19 +77,31 @@ export function hasLayoutBox(element: Element): boolean {
 }
 
 /**
- * Whether the element carries an explicit inline width in px.
+ * The element's own inline width when it is an explicit px length.
  *
  * The left sidebar root freezes its expanded width inline
  * (`SidebarRoot.tsx`: `style={{ width }}`) so the collapse slide does not
  * reflow its content. An explicit px width is scaled by `zoom` under every
  * engine's semantics — unlike a percentage or `auto` width — so such a root
- * always needs the width compensation, independent of any measurement.
+ * always needs its width compensation, and the compensation has to follow that
+ * frozen value (not the column's box) to keep the host's own layout intent.
+ * @param element - candidate zoom target.
+ * @returns the width in px, or undefined when the inline width is absent or not px.
+ */
+export function inlinePixelWidth(element: Element): number | undefined {
+  const width = (element as HTMLElement).style?.getPropertyValue('width').trim() ?? ''
+  if (!/^\d+(?:\.\d+)?px$/u.test(width)) return undefined
+  const value = Number.parseFloat(width)
+  return Number.isFinite(value) ? value : undefined
+}
+
+/**
+ * Whether the element carries an explicit inline width in px.
  * @param element - candidate zoom target.
  * @returns true for `width: <number>px` in the element's own inline style.
  */
 export function hasInlinePixelWidth(element: Element): boolean {
-  const width = (element as HTMLElement).style?.getPropertyValue('width').trim()
-  return width !== '' && /^\d+(?:\.\d+)?px$/u.test(width)
+  return inlinePixelWidth(element) !== undefined
 }
 
 /**
