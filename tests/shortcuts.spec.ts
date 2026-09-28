@@ -3,10 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { COMMAND_IDS, installShortcuts } from '../src/client/shortcuts.ts'
 import type { HostShortcutCommand, HostShortcutService } from '../src/client/host.ts'
 import { copyFor } from '../src/client/copy.ts'
-import type { PaneId } from '../src/client/targets.ts'
+import type { SlotId } from '../src/client/targets.ts'
 
 /** Recorded step calls. */
-type Step = [PaneId, 1 | -1 | 0]
+type Step = [SlotId, 1 | -1 | 0]
 
 /** A stub service that records registrations. */
 function service(runtime: 'desktop' | 'web', failOn?: string): {
@@ -36,20 +36,20 @@ function ctxFor(stub: HostShortcutService): { get(name: string): unknown } {
 /** Install with recording stubs. */
 function install(options: { runtime?: 'desktop' | 'web', failOn?: string, noService?: boolean } = {}): {
   steps: Step[]
-  target: { pane: PaneId | null }
+  target: { slot: SlotId | null }
   install: ReturnType<typeof installShortcuts>
   warn: ReturnType<typeof vi.fn>
   registered: HostShortcutCommand[]
   disposed: string[]
 } {
   const steps: Step[] = []
-  const target: { pane: PaneId | null } = { pane: 'center' }
+  const target: { slot: SlotId | null } = { slot: 'center' }
   const { stub, registered, disposed } = service(options.runtime ?? 'desktop', options.failOn)
   const warn = vi.fn()
   const handle = installShortcuts(
     document,
     options.noService === true ? {} : ctxFor(stub),
-    { paneFor: () => target.pane, step: (pane, direction) => steps.push([pane, direction]) },
+    { slotFor: () => target.slot, step: (slot, direction) => steps.push([slot, direction]) },
     warn,
     copyFor(document),
   )
@@ -103,7 +103,7 @@ describe('host integration (desktop runtime)', () => {
     expect(harness.steps).toEqual([])
     if (resolution?.status === 'handled') resolution.run()
     expect(harness.steps).toEqual([['center', 1]])
-    harness.target.pane = 'right'
+    harness.target.slot = 'right'
     const decrease = harness.registered[1]
     const out = decrease?.resolve(context)
     if (out?.status === 'handled') out.run()
@@ -113,7 +113,7 @@ describe('host integration (desktop runtime)', () => {
 
   it('passes when no pane can be resolved', () => {
     const harness = install({ runtime: 'desktop' })
-    harness.target.pane = null
+    harness.target.slot = null
     expect(harness.registered[0]?.resolve({ region: 'page', modal: null, target: null }))
       .toEqual({ status: 'pass' })
     harness.install.dispose()

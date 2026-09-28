@@ -44,7 +44,7 @@ describe('wheel over a pane', () => {
     const prevented = wheel(element(document, '.cv_root'), { ctrlKey: true, deltaY: -UNITS_PER_STEP })
     expect(prevented).toBe(true)
     expect(harness.steps).toEqual([['center', 1]])
-    expect(harness.state.pointerPane).toBe('center')
+    expect(harness.state.pointerSlot).toBe('center')
   })
 
   it('walks through the panes independently', () => {
@@ -72,6 +72,41 @@ describe('wheel over a pane', () => {
   })
 })
 
+describe('split right sidebar', () => {
+  beforeEach(() => {
+    harness.dispose()
+    harness = setup({ splitRight: true })
+  })
+
+  const ctrl = { ctrlKey: true, deltaY: -UNITS_PER_STEP }
+
+  it('scales each right column on its own', () => {
+    expect(wheel(element(document, "[data-dockkit-column='0'] > section"), ctrl)).toBe(true)
+    expect(wheel(element(document, "[data-dockkit-column='1'] > section"), ctrl)).toBe(true)
+    expect(harness.steps).toEqual([['right', 1], ['right-1', 1]])
+    expect(harness.state.pointerSlot).toBe('right-1')
+  })
+
+  it('restarts the residual when the gesture moves between columns', () => {
+    const columnZero = "[data-dockkit-column='0'] > section"
+    const columnOne = "[data-dockkit-column='1'] > section"
+    wheel(element(document, columnZero), { ctrlKey: true, deltaY: -60 })
+    wheel(element(document, columnOne), { ctrlKey: true, deltaY: -60 })
+    expect(harness.steps).toEqual([])
+    wheel(element(document, columnZero), { ctrlKey: true, deltaY: -60 })
+    expect(harness.steps).toEqual([])
+    wheel(element(document, columnZero), { ctrlKey: true, deltaY: -60 })
+    expect(harness.steps).toEqual([['right', 1]])
+  })
+
+  it('falls back to the last right column for the split divider', () => {
+    expect(wheel(element(document, "[data-dockkit-column='1'] > section"), ctrl)).toBe(true)
+    harness.steps.length = 0
+    expect(wheel(element(document, '.dk_divider'), ctrl)).toBe(true)
+    expect(harness.steps).toEqual([['right-1', 1]])
+  })
+})
+
 describe('skin chrome at column level', () => {
   beforeEach(() => {
     harness.dispose()
@@ -84,7 +119,7 @@ describe('skin chrome at column level', () => {
       expect(wheel(element(document, chrome), ctrl)).toBe(true)
     }
     expect(harness.steps).toEqual([['left', 1], ['left', 1], ['left', 1]])
-    expect(harness.state.pointerPane).toBe('left')
+    expect(harness.state.pointerSlot).toBe('left')
     expect(wheel(element(document, '.sk_chatStage'), ctrl)).toBe(true)
     expect(harness.steps.at(-1)).toEqual(['center', 1])
     expect(wheel(element(document, '.sk_chatChrome'), ctrl)).toBe(true)
@@ -174,11 +209,11 @@ describe('accumulation', () => {
 
 describe('pointer cache and teardown', () => {
   it('remembers the last pointer pane on pointerdown', () => {
-    expect(harness.state.pointerPane).toBeNull()
+    expect(harness.state.pointerSlot).toBeNull()
     element(document, '.sb_root').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
-    expect(harness.state.pointerPane).toBe('left')
+    expect(harness.state.pointerSlot).toBe('left')
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
-    expect(harness.state.pointerPane).toBe('left')
+    expect(harness.state.pointerSlot).toBe('left')
   })
 
   it('stops handling every gesture after dispose', () => {

@@ -180,6 +180,30 @@ describe('wheel scaling end to end', () => {
     expect(style(zoomVariable('left'))).toBe('0.75')
   })
 
+  it('scales each split right column on its own and keeps both values', () => {
+    vi.useFakeTimers()
+    harness = activate({}, () => { buildShell(document, { splitRight: true }) })
+    const first = element(document, "[data-dockkit-column='0'] > section")
+    const second = element(document, "[data-dockkit-column='1'] > section")
+    expect(style(zoomVariable('right'))).toBe('1')
+    expect(style(zoomVariable('right-1'))).toBe('1')
+    expect(wheel(second)).toBe(true)
+    expect(style(zoomVariable('right-1'))).toBe('1.05')
+    expect(style(zoomVariable('right'))).toBe('1')
+    expect(style(counterVariable('right-1'))).toBe('0.952381')
+    expect(document.querySelector('[data-pane-scaling-badge]')?.textContent).toContain('右栏 2 105%')
+    expect(wheel(first, 100)).toBe(true)
+    expect(style(zoomVariable('right'))).toBe('0.95')
+    expect(style(zoomVariable('right-1'))).toBe('1.05')
+    expect(decodeZoom(localStorage.getItem(STORE_KEY))).toMatchObject({ right: 19, 'right-1': 21 })
+    // The keyboard acts on the slot that holds focus.
+    second.tabIndex = 0
+    second.focus()
+    press('Digit0')
+    expect(style(zoomVariable('right-1'))).toBe('1')
+    expect(style(zoomVariable('right'))).toBe('0.95')
+  })
+
   it('lets the host zoom surfaces through untouched', () => {
     harness = activate()
     const scrollport = element(document, '[data-conversation-scroll]')

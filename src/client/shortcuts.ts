@@ -12,8 +12,8 @@ import { copyFor } from './copy.ts'
 import { readShortcutService } from './host.ts'
 import type { HostShortcutCommand } from './host.ts'
 import type { PluginCopy } from './copy.ts'
-import { isExcludedSurface } from './targets.ts'
-import type { PaneId } from './targets.ts'
+import { isExcludedSurface, slotForTarget } from './targets.ts'
+import type { SlotId } from './targets.ts'
 
 /** Command ids; they satisfy the host's `commandPattern` and are user-editable. */
 export const COMMAND_IDS = {
@@ -34,10 +34,10 @@ const DIRECTION_BY_CODE: Readonly<Record<string, 1 | -1 | 0>> = {
 
 /** Engine hooks the keyboard path needs. */
 export interface ShortcutTargets {
-  /** Resolve the pane a keyboard gesture acts on, or null when it must be left alone. */
-  paneFor(target: Element | null): PaneId | null
-  /** Apply one step to a pane. */
-  step(pane: PaneId, direction: 1 | -1 | 0): void
+  /** Resolve the slot a keyboard gesture acts on, or null when it must be left alone. */
+  slotFor(target: Element | null): SlotId | null
+  /** Apply one step to a slot. */
+  step(slot: SlotId, direction: 1 | -1 | 0): void
 }
 
 /** The installed keyboard path. */
@@ -74,9 +74,9 @@ function commands(copy: PluginCopy, targets: ShortcutTargets): HostShortcutComma
       regions: ['page', 'editable'],
       modals: [],
       resolve: (context) => {
-        const pane = targets.paneFor(context.target)
-        if (pane === null) return { status: 'pass' }
-        return { status: 'handled', run: () => { targets.step(pane, direction) } }
+        const slot = targets.slotFor(context.target)
+        if (slot === null) return { status: 'pass' }
+        return { status: 'handled', run: () => { targets.step(slot, direction) } }
       },
     }
   }
@@ -130,13 +130,14 @@ export function installShortcuts(
     const direction = directionOfCode(event.code)
     if (direction === undefined) return
     const target = doc.activeElement
+    // The terminal and the document-preview surfaces own these keys themselves.
     if (isExcludedSurface(target)) return
-    const pane = targets.paneFor(target)
-    if (pane === null) return
+    const slot = targets.slotFor(target)
+    if (slot === null) return
     event.preventDefault()
     // Match the host's semantics: held keys do not repeat the action.
     if (event.repeat) return
-    targets.step(pane, direction)
+    targets.step(slot, direction)
   }
 
   const view = doc.defaultView

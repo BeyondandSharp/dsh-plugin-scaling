@@ -1,6 +1,6 @@
 /** Transient percentage badge: the plugin's only visible surface. */
 import type { PluginCopy } from './copy.ts'
-import type { PaneId } from './targets.ts'
+import type { SlotId } from './targets.ts'
 
 /** Attribute identifying the badge element. */
 export const BADGE_ATTRIBUTE = 'data-pane-scaling-badge'
@@ -13,8 +13,8 @@ export const BADGE_VISIBLE_MS = 1200
 
 /** The badge handle owned by the engine. */
 export interface Badge {
-  /** Show the current pane's percentage; the first call also adds the reset hint. */
-  show(pane: PaneId, zoom: number): void
+  /** Show the current slot's percentage; the first call also adds the reset hint. */
+  show(slot: SlotId, zoom: number): void
   /** Remove the element and any pending timer. */
   dispose(): void
 }
@@ -46,9 +46,9 @@ export function createBadge(doc: Document, copy: PluginCopy): Badge {
   }
 
   return {
-    show(pane, zoom) {
+    show(slot, zoom) {
       const node = ensure()
-      const text = `${copy.pane(pane)} ${copy.percent(zoom)}`
+      const text = `${copy.slot(slot)} ${copy.percent(zoom)}`
       node.textContent = hinted ? text : `${text} · ${copy.resetHint}`
       hinted = true
       node.setAttribute(BADGE_VISIBLE_ATTRIBUTE, '')

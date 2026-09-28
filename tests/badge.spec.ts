@@ -42,6 +42,22 @@ describe('badge', () => {
     handle.dispose()
   })
 
+  it('labels the split right columns apart', () => {
+    document.documentElement.lang = 'en'
+    const handle = createBadge(document, copyFor(document))
+    handle.show('right', 1.05)
+    expect(badge()?.textContent).toContain('Right 105%')
+    expect(badge()?.textContent).not.toContain('Right 2')
+    handle.show('right-1', 1.05)
+    expect(badge()?.textContent).toContain('Right 2 105%')
+    handle.dispose()
+    document.documentElement.lang = 'zh-CN'
+    const zh = createBadge(document, copyFor(document))
+    zh.show('right-1', 0.75)
+    expect(badge()?.textContent).toContain('右栏 2 75%')
+    zh.dispose()
+  })
+
   it('adds the reset hint only on the first show', () => {
     const handle = createBadge(document, copyFor(document))
     handle.show('center', 1)

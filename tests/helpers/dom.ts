@@ -7,8 +7,10 @@ export interface ShellOptions {
   skin?: boolean
   /** Omit the right column, as when the right bar is closed. */
   withoutRight?: boolean
-  /** Include a second, unselected dock cell. */
+  /** Include a second, unselected dock cell in the same column. */
   secondDockPane?: boolean
+  /** Split the right dock into both of its columns (`right` + `right-1`). */
+  splitRight?: boolean
   /** Put an xterm screen inside the right dock pane. */
   withTerminal?: boolean
 }
@@ -35,15 +37,17 @@ function decoration(doc: Document, className: string): HTMLDivElement {
   return node
 }
 
-function dockCell(doc: Document, options: { selected: boolean, terminal?: boolean }): HTMLDivElement {
+function dockCell(doc: Document, options: { selected: boolean, column?: number, terminal?: boolean }): HTMLDivElement {
   const cell = doc.createElement('div')
   cell.className = 'dk_tabCell'
   cell.setAttribute('data-dockkit-host', 'dock')
+  if (options.column !== undefined) cell.setAttribute('data-dockkit-column', String(options.column))
   if (!options.selected) cell.hidden = true
   const section = doc.createElement('section')
   section.className = 'dk_tabHost dk_pane'
   section.tabIndex = -1
-  if (options.selected) section.setAttribute('data-dockkit-pane', 'pane-a')
+  if (options.column !== undefined) section.setAttribute('data-dockkit-column', String(options.column))
+  if (options.selected) section.setAttribute('data-dockkit-pane', `pane-${String(options.column ?? 0)}`)
   const header = doc.createElement('div')
   header.className = 'dk_tabHostHeader'
   const body = doc.createElement('div')
@@ -122,8 +126,21 @@ export function buildShell(doc: Document, options: ShellOptions = {}): HTMLEleme
     panelBody.className = 'sr_panelBody'
     const tabLayout = doc.createElement('div')
     tabLayout.className = 'dk_tabLayout'
-    tabLayout.append(dockCell(doc, { selected: true, ...(options.withTerminal === true ? { terminal: true } : {}) }))
-    if (options.secondDockPane === true) tabLayout.append(dockCell(doc, { selected: false }))
+    if (options.splitRight === true) {
+      tabLayout.append(dockCell(doc, { selected: true, column: 0 }))
+      tabLayout.append(dockCell(doc, { selected: true, column: 1 }))
+      const divider = doc.createElement('div')
+      divider.className = 'dk_divider'
+      divider.setAttribute('data-dockkit-divider', 'split:0')
+      tabLayout.append(divider)
+    } else {
+      tabLayout.append(dockCell(doc, {
+        selected: true,
+        column: 0,
+        ...(options.withTerminal === true ? { terminal: true } : {}),
+      }))
+    }
+    if (options.secondDockPane === true) tabLayout.append(dockCell(doc, { selected: false, column: 0 }))
     const floatCell = doc.createElement('div')
     floatCell.className = 'dk_tabCell dk_floatingCell'
     floatCell.setAttribute('data-dockkit-host', 'float')

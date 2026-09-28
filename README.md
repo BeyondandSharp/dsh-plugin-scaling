@@ -7,6 +7,8 @@
 - `Ctrl` **+ `+` / `-`** → 缩放**焦点所在栏**（回退顺序：焦点元素最近的栏 → 最近指针交互的栏 → 中栏）
 - `Ctrl` **+ `0`** → 把该栏复位到 100%
 
+右栏侧栏可以拆成两列（`ui-dockkit` 最多两列，`TabLayout` 对其它形状直接抛错），**两列各自独立缩放**，互不影响。
+
 档位 75%–150%、每档 5%；100% 时渲染与不装插件逐像素一致。
 
 ## 安装
@@ -30,7 +32,7 @@ dsh plugin --profile web add github:BeyondandSharp/dsh-plugin-scaling
 
 | 键 | 值 |
 | --- | --- |
-| `localStorage['dsh.plugin-scaling.v1']` | `{"left":1,"center":1,"right":1}`（缩放倍率；左/中/右独立） |
+| `localStorage['dsh.plugin-scaling.v1']` | `{"left":1,"center":1,"right":1,"right-1":1}`（缩放倍率；左/中/右/右栏第二列独立） |
 
 `localStorage` 不可用（隐私模式、站点数据被禁）时退化为纯内存，功能不丢、只是不持久。
 损坏的 JSON、越界值、非数字项按项忽略并夹紧到 75%–150%。
@@ -50,7 +52,7 @@ dsh plugin --profile web add github:BeyondandSharp/dsh-plugin-scaling
 | --- | --- |
 | 左栏 | `[class*='sidebarCol']` 内包含 `[data-slot='sidebar.settings']` / `[data-slot='sidebar.panellist']` 等插槽锚点（`display: contents` 会穿透）的内容根 |
 | 中栏 | `[class*='centerCol']` 内包含 `[data-conversation-scroll]` 的内容根 |
-| 右栏 | `[data-dockkit-host='dock']` 的可见分栏 `> section` |
+| 右栏 | `[data-dockkit-host='dock']` 的可见分栏 `> section`，**分栏后各列独立**（`right` / `right-1`） |
 
 两点与皮肤直接相关：
 
@@ -59,7 +61,7 @@ dsh plugin --profile web add github:BeyondandSharp/dsh-plugin-scaling
 
 ## 已知取舍与限制
 
-- **不缩放**右栏浮动面板（`[data-dockkit-float]`）与含终端（`.xterm`）的分栏：浮窗用内联坐标定位，终端画布不重排。
+- **不缩放**右栏浮动面板（`[data-dockkit-float]`）与含终端（`.xterm`）的分栏：浮窗用内联坐标定位，终端画布不重排（分栏里只有含终端的那一列退出，另一列照常）。
 - 宿主自己的缩放面（文档/PDF/图片预览）仍由宿主处理 `Ctrl+滚轮`，本插件一律放行；终端同理。
 - 悬停类 Tooltip 气泡由宿主渲染在栏内且不 portal，本插件在**自校准判定需要时**才补偿它的尺寸与原点。
 - **Web 壳的 `Ctrl+±`/`0` 键位固定不可改**：宿主的快捷键服务把 Web 运行时上的 `Ctrl+=` 判为浏览器保留组合（`unsupported-browser`）而拒绝注册，且其物理键白名单不含小键盘 code；本插件因此在 Web 壳使用内置监听（功能完整，只是不出现在「设置 → 快捷键」里）。在 Electron 桌面壳上会注册成三条可改键命令（`pane-scaling.in` / `.out` / `.reset`）。

@@ -59,11 +59,14 @@ describe('scoping', () => {
 })
 
 describe('zoom rules', () => {
-  it('declares one rule per pane with its own variable', () => {
-    for (const pane of ['left', 'center', 'right']) {
-      expect(css).toContain(`[data-pane-scaling-target='${pane}']`)
-      expect(css).toContain(`zoom: var(--pane-scaling-${pane})`)
+  it('declares one rule per slot with its own variable', () => {
+    for (const slot of ['left', 'center', 'right', 'right-1']) {
+      expect(css).toContain(`[data-pane-scaling-slot='${slot}']`)
+      expect(css).toContain(`zoom: var(--pane-scaling-${slot})`)
+      expect(css).toContain(`--pane-scaling-counter: var(--pane-scaling-counter-${slot})`)
     }
+    // Slots, not panes, carry the zoom: two right columns must not share one rule.
+    expect(ruleBlocks(css).filter(rule => rule.body.includes('--pane-scaling-own: var(--pane-scaling-'))).toHaveLength(4)
   })
 
   it('gates the fill compensation on the calibrated attribute', () => {

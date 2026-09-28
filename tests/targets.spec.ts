@@ -1,8 +1,9 @@
 /** Pane target resolution and the incremental mark lease. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  FIXED_OVERLAY_ATTRIBUTE, TARGET_ATTRIBUTE, clearTargetMarks, hasInlinePixelWidth, inlinePixelWidth,
-  isExcludedSurface, paneOfColumn, paneOfNode, resolvePaneTargets, syncTargetMarks,
+  FIXED_OVERLAY_ATTRIBUTE, SLOT_ATTRIBUTE, TARGET_ATTRIBUTE, clearTargetMarks, hasInlinePixelWidth,
+  inlinePixelWidth, isExcludedSurface, paneOfColumn, paneOfNode, resolvePaneTargets, slotForTarget,
+  syncTargetMarks,
 } from '../src/client/targets.ts'
 import { buildShell, element } from './helpers/dom.ts'
 
@@ -43,8 +44,43 @@ describe('resolvePaneTargets', () => {
     expect(rightTargets).toHaveLength(1)
     expect(rightTargets[0]?.element.tagName).toBe('SECTION')
     expect(rightTargets[0]?.element.className).toContain('dk_pane')
+    expect(rightTargets[0]?.slot).toBe('right')
     expect(element(document, '.sr_panel').hasAttribute(TARGET_ATTRIBUTE)).toBe(false)
     expect(document.querySelector('[data-dockkit-float]')?.hasAttribute(TARGET_ATTRIBUTE)).toBe(false)
+  })
+
+  it('gives each split right column its own slot', () => {
+    buildShell(document, { splitRight: true })
+    const targets = resolvePaneTargets(document)
+    const slots = targets.map(target => target.slot)
+    expect(slots).toEqual(['left', 'center', 'right', 'right-1'])
+    const owned = syncTargetMarks(new Map(), targets)
+    expect(owned.size).toBe(4)
+    for (const target of targets) {
+      expect(target.element.getAttribute(TARGET_ATTRIBUTE)).toBe(target.pane)
+      expect(target.element.getAttribute(SLOT_ATTRIBUTE)).toBe(target.slot)
+    }
+    // The split divider is chrome, not a target.
+    expect(element(document, '.dk_divider').hasAttribute(TARGET_ATTRIBUTE)).toBe(false)
+  })
+
+  it('keeps the split slot labels when one column is a terminal', () => {
+    buildShell(document, { splitRight: true })
+    element(document, "[data-dockkit-column='1'] > section .dk_paneBody").append(
+      Object.assign(document.createElement('div'), { className: 'xterm' }),
+    )
+    const slots = resolvePaneTargets(document).map(target => target.slot)
+    expect(slots).toEqual(['left', 'center', 'right'])
+  })
+
+  it('follows a column move back to the pane slots', () => {
+    buildShell(document, { splitRight: true })
+    const owned = syncTargetMarks(new Map(), resolvePaneTargets(document))
+    const second = element(document, "[data-dockkit-column='1'] > section")
+    second.setAttribute('data-dockkit-column', '0')
+    const next = syncTargetMarks(owned, resolvePaneTargets(document))
+    expect(next.size).toBe(4)
+    expect(second.getAttribute(SLOT_ATTRIBUTE)).toBe('right')
   })
 
   it('skips a dock compartment that hosts a terminal', () => {
@@ -160,6 +196,29 @@ describe('paneOfNode / isExcludedSurface', () => {
     expect(isExcludedSurface(element(document, '[data-dockkit-float]'))).toBe(true)
     expect(isExcludedSurface(element(document, '.cv_root'))).toBe(false)
     expect(isExcludedSurface(null)).toBe(false)
+  })
+})
+
+describe('slotForTarget', () => {
+  it('prefers the marked root, then the column, then the last right column', () => {
+    buildShell(document, { splitRight: true })
+    sync(document)
+    expect(slotForTarget(element(document, "[data-dockkit-column='1'] > section"), null)).toBe('right-1')
+    expect(slotForTarget(element(document, '.cv_root'), null)).toBe('center')
+    // Column chrome carries no mark: the pane is clear, the column is not.
+    expect(slotForTarget(element(document, '.dk_divider'), null)).toBe('right')
+    expect(slotForTarget(element(document, '.dk_divider'), 'right-1')).toBe('right-1')
+    expect(slotForTarget(element(document, '.dk_divider'), 'left')).toBe('right')
+  })
+
+  it('stays out of portalled surfaces', () => {
+    buildShell(document)
+    sync(document)
+    const portal = document.createElement('div')
+    portal.setAttribute('role', 'dialog')
+    document.body.append(portal)
+    expect(slotForTarget(portal, 'right-1')).toBeNull()
+    expect(slotForTarget(null, 'right-1')).toBeNull()
   })
 })
 

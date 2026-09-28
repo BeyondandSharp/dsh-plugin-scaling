@@ -1,6 +1,5 @@
-/** Zoom persistence: one integer step index per pane, validated and clamped. */
-import { PANE_IDS } from './targets.ts'
-import type { PaneId } from './targets.ts'
+/** Zoom persistence: one integer step index per slot, validated and clamped. */
+import type { SlotId } from './targets.ts'
 
 /** localStorage key owned by this plugin. */
 export const STORE_KEY = 'dsh.plugin-scaling.v1'
@@ -17,8 +16,8 @@ export const DEFAULT_STEP = 20
 /** Steps per unit of zoom: 1 step = 5%. */
 const STEPS_PER_UNIT = 20
 
-/** One integer step index per pane. */
-export type ZoomSteps = Record<PaneId, number>
+/** One integer step index per slot. */
+export type ZoomSteps = Record<SlotId, number>
 
 /** The storage slice this module needs; `undefined` degrades to memory only. */
 export interface ZoomStore {
@@ -56,17 +55,19 @@ export function zoomToStep(zoom: number): number {
 }
 
 /**
- * A fresh 100% state.
- * @returns one default step per pane.
+ * A fresh 100% state: the three panes plus the right sidebar's second dock
+ * column, which `ui-dockkit` can split out and which is otherwise unused.
+ * @returns the default step per slot.
  */
 export function defaultSteps(): ZoomSteps {
-  return { left: DEFAULT_STEP, center: DEFAULT_STEP, right: DEFAULT_STEP }
+  return { left: DEFAULT_STEP, center: DEFAULT_STEP, right: DEFAULT_STEP, 'right-1': DEFAULT_STEP }
 }
 
 /**
- * Decode a stored document, falling back per pane on any malformed field.
- * Invalid JSON, a non-object root, missing panes, non-numbers, and
- * out-of-range values all degrade to 100% or a clamped step.
+ * Decode a stored document, falling back per slot on any malformed field.
+ * Invalid JSON, a non-object root, missing slots, non-numbers, and
+ * out-of-range values all degrade to 100% or a clamped step. Unknown keys are
+ * ignored, so a newer document stays readable.
  * @param raw - the stored string, or null.
  * @returns decoded steps.
  */
@@ -81,10 +82,10 @@ export function decodeZoom(raw: string | null): ZoomSteps {
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return steps
   const record = parsed as Record<string, unknown>
-  for (const pane of PANE_IDS) {
-    const value = record[pane]
+  for (const slot of Object.keys(steps) as SlotId[]) {
+    const value = record[slot]
     if (typeof value !== 'number' || !Number.isFinite(value)) continue
-    steps[pane] = zoomToStep(value)
+    steps[slot] = zoomToStep(value)
   }
   return steps
 }
@@ -92,7 +93,8 @@ export function decodeZoom(raw: string | null): ZoomSteps {
 /**
  * Encode the state as zoom factors with a fixed key order, so the stored
  * document matches the documented schema (`{"left":1.05,...}`) and equal
- * states produce equal strings.
+ * states produce equal strings. `right-1` is always written: it is the second
+ * right-dock column's value, applied whenever that column exists.
  * @param steps - the current state.
  * @returns the stored document.
  */
@@ -101,6 +103,7 @@ export function encodeZoom(steps: ZoomSteps): string {
     left: stepToZoom(steps.left),
     center: stepToZoom(steps.center),
     right: stepToZoom(steps.right),
+    'right-1': stepToZoom(steps['right-1']),
   })
 }
 

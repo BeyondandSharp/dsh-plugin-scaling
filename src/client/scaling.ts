@@ -19,25 +19,25 @@ import {
 } from './storage.ts'
 import type { ZoomSteps } from './storage.ts'
 import {
-  PANE_IDS, clearTargetMarks, inlinePixelWidth, isExcludedSurface, isPaneStructureChange, paneOfColumn,
-  paneOfNode, resolvePaneTargets, syncTargetMarks,
+  PANE_IDS, SLOT_ATTRIBUTE, SLOT_IDS, clearTargetMarks, inlinePixelWidth, isExcludedSurface,
+  isPaneStructureChange, resolvePaneTargets, slotForTarget, syncTargetMarks,
 } from './targets.ts'
-import type { PaneId } from './targets.ts'
+import type { PaneId, SlotId } from './targets.ts'
 
 /** Body attribute marking the plugin as active; scopes every static rule. */
 export const ACTIVE_ATTRIBUTE = 'data-dsh-plugin-scaling'
 
-/** Inline zoom factor for one pane, read by the pane rules. */
-export const zoomVariable = (pane: PaneId): string => `--pane-scaling-${pane}`
+/** Inline zoom factor for one slot, read by the slot rules. */
+export const zoomVariable = (slot: SlotId): string => `--pane-scaling-${slot}`
 
-/** Numeric reverse zoom for the pane's fixed overlays. */
-export const counterVariable = (pane: PaneId): string => `--pane-scaling-counter-${pane}`
+/** Numeric reverse zoom for the slot's fixed overlays. */
+export const counterVariable = (slot: SlotId): string => `--pane-scaling-counter-${slot}`
 
-/** Measured pane origin x, used by the contained-mode translate. */
-export const originXVariable = (pane: PaneId): string => `--pane-scaling-origin-x-${pane}`
+/** Measured slot origin x, used by the contained-mode translate. */
+export const originXVariable = (slot: SlotId): string => `--pane-scaling-origin-x-${slot}`
 
-/** Measured pane origin y, used by the contained-mode translate. */
-export const originYVariable = (pane: PaneId): string => `--pane-scaling-origin-y-${pane}`
+/** Measured slot origin y, used by the contained-mode translate. */
+export const originYVariable = (slot: SlotId): string => `--pane-scaling-origin-y-${slot}`
 
 /** Test seams; production callers pass nothing. */
 export interface InstallOptions {
@@ -101,23 +101,23 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
   }
 
   const html = doc.documentElement
-  const zoomNames = PANE_IDS.map(pane => zoomVariable(pane))
-  const counterNames = PANE_IDS.map(pane => counterVariable(pane))
+  const zoomNames = SLOT_IDS.map(slot => zoomVariable(slot))
+  const counterNames = SLOT_IDS.map(slot => counterVariable(slot))
   const originNames = [
-    ...PANE_IDS.map(pane => originXVariable(pane)),
-    ...PANE_IDS.map(pane => originYVariable(pane)),
+    ...SLOT_IDS.map(slot => originXVariable(slot)),
+    ...SLOT_IDS.map(slot => originYVariable(slot)),
   ]
   const fillWidthNames = PANE_IDS.map(pane => fillWidthVariable(pane))
   sweepStyles(html, [...zoomNames, ...counterNames, ...originNames, ...fillWidthNames])
 
   const store = localStorageOf(view)
   const steps: ZoomSteps = readZoom(store)
-  const apply = (pane: PaneId, step: number): void => {
+  const apply = (slot: SlotId, step: number): void => {
     const zoom = stepToZoom(step)
-    setStyle(html, zoomVariable(pane), String(zoom))
-    setStyle(html, counterVariable(pane), counterOf(zoom))
+    setStyle(html, zoomVariable(slot), String(zoom))
+    setStyle(html, counterVariable(slot), counterOf(zoom))
   }
-  for (const pane of PANE_IDS) apply(pane, steps[pane])
+  for (const slot of SLOT_IDS) apply(slot, steps[slot])
 
   setAttribute(target, ACTIVE_ATTRIBUTE, '')
   undo.push(() => {
@@ -136,6 +136,12 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
 
   let marks = new Map<HTMLElement, PaneId>()
   let overlays = new Set<HTMLElement>()
+
+  /** Slot of a marked root, as stamped by the last {@link sync}. */
+  const slotOfMarked = (element: Element): SlotId | null => {
+    const value = element.getAttribute(SLOT_ATTRIBUTE)
+    return value !== null && /^(left|center|right|right-\d+)$/u.test(value) ? value as SlotId : null
+  }
 
   /**
    * Compensate the width of a pane whose root carries an explicit inline px
@@ -182,10 +188,12 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
 
   const refreshOrigins = (): void => {
     if (fixed !== 'contained') return
-    for (const [element, pane] of marks) {
+    for (const element of marks.keys()) {
+      const slot = slotOfMarked(element)
+      if (slot === null) continue
       const rect = element.getBoundingClientRect()
-      setStyle(html, originXVariable(pane), `${rect.x}px`)
-      setStyle(html, originYVariable(pane), `${rect.y}px`)
+      setStyle(html, originXVariable(slot), `${rect.x}px`)
+      setStyle(html, originYVariable(slot), `${rect.y}px`)
     }
   }
 
@@ -231,11 +239,11 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
     view?.removeEventListener('resize', scheduleSync)
   })
 
-  const runCalibration = (pane: PaneId): void => {
-    const root = [...marks].find(([, value]) => value === pane)?.[0]
+  const runCalibration = (slot: SlotId): void => {
+    const root = [...marks.keys()].find(element => slotOfMarked(element) === slot)
     if (root === undefined) return
     try {
-      const result = calibrate(root, stepToZoom(steps[pane]), options.probe ?? domProbeEnvironment(doc))
+      const result = calibrate(root, stepToZoom(steps[slot]), options.probe ?? domProbeEnvironment(doc))
       fill = result.fill
       fixed = result.fixed
       calibrated = true
@@ -253,17 +261,17 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
   const badge = createBadge(doc, copyFor(doc))
   disposers.push(() => { badge.dispose() })
 
-  const step = (pane: PaneId, direction: 1 | -1 | 0): void => {
-    const next = clampTarget(steps[pane], direction)
-    if (next === steps[pane]) return
-    steps[pane] = next
-    apply(pane, next)
+  const step = (slot: SlotId, direction: 1 | -1 | 0): void => {
+    const next = clampTarget(steps[slot], direction)
+    if (next === steps[slot]) return
+    steps[slot] = next
+    apply(slot, next)
     // The host can (re)write its frozen inline width on any render, so the
     // forced gate is re-evaluated on every change instead of only on structure.
     refreshForcedFill()
     writeZoom(store, steps)
-    badge.show(pane, stepToZoom(next))
-    if (!calibrated && next !== DEFAULT_STEP) runCalibration(pane)
+    badge.show(slot, stepToZoom(next))
+    if (!calibrated && next !== DEFAULT_STEP) runCalibration(slot)
     if (fixed === 'contained') refreshOrigins()
   }
 
@@ -271,9 +279,12 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
   disposers.push(installGestures(doc, { step }, gestureState))
 
   const shortcuts = installShortcuts(doc, ctx, {
-    paneFor: (node) => {
+    slotFor: (node) => {
       if (isExcludedSurface(node)) return null
-      return paneOfNode(node) ?? paneOfColumn(node) ?? gestureState.pointerPane ?? 'center'
+      const slot = slotForTarget(node, gestureState.pointerSlot)
+      // A command with no pane under it still acts on the last used slot, then
+      // on the centre pane, matching the documented focus fallback order.
+      return slot ?? gestureState.pointerSlot ?? 'center'
     },
     step,
   }, warn)
