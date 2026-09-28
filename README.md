@@ -13,8 +13,8 @@
 
 右栏拆成两列后，两列各算一栏、各自独立缩放。每次变化右下角会显示一下「栏名 + 百分比」。
 
-<img width="2022" height="600" alt="20260929040325_rec_" src="https://github.com/user-attachments/assets/d915849f-2cad-4f00-bdc0-835780c0ca0d" />
-<img width="2022" height="600" alt="20260929040203_rec_" src="https://github.com/user-attachments/assets/4efbcfff-05f3-44eb-b999-35ac1bd3f1bf" />
+<img width="2022" alt="20260929040325_rec_" src="https://github.com/user-attachments/assets/d915849f-2cad-4f00-bdc0-835780c0ca0d" />
+<img width="2022" alt="20260929040203_rec_" src="https://github.com/user-attachments/assets/4efbcfff-05f3-44eb-b999-35ac1bd3f1bf" />
 
 
 ## 安装
