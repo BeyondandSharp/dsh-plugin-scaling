@@ -12,8 +12,13 @@
     "./package.json": "./package.json"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
-    "client": { "inject": [], "platform": "web" }
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
   },
   "scripts": {
     "build": "tsdown",
@@ -25,14 +30,21 @@
     "url": "git+https://github.com/BeyondandSharp/dsh-plugin-scaling.git"
   },
   "homepage": "https://github.com/BeyondandSharp/dsh-plugin-scaling#readme",
-  "bugs": { "url": "https://github.com/BeyondandSharp/dsh-plugin-scaling/issues" },
-  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
+  "bugs": {
+    "url": "https://github.com/BeyondandSharp/dsh-plugin-scaling/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh": ">=0.1.7-rc.1"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh": { "optional": true }
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -46,6 +58,7 @@
     "lib/client.js",
     "cordis.patch.yml",
     "README.md",
+    "docs/DESIGN.md",
     "LICENSE",
     "locale/*.json",
     "assets/plugin-icon.svg"
