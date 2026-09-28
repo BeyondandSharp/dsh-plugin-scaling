@@ -7,7 +7,7 @@
  * window listeners as blocking, so the handler's first lines are the two
  * cheapest possible tests and everything else happens after the hit check.
  */
-import { isExcludedSurface, paneOfNode } from './targets.ts'
+import { isExcludedSurface, paneOfColumn, paneOfNode } from './targets.ts'
 import type { PaneId } from './targets.ts'
 
 /** Wheel units that add up to one 5% step. */
@@ -66,7 +66,9 @@ export function installGestures(doc: Document, host: GestureHost, state: Gesture
     if (!event.ctrlKey && !event.metaKey) return
     const target = event.target instanceof Element ? event.target : null
     if (target === null || isExcludedSurface(target)) return
-    const pane = paneOfNode(target)
+    // Skin chrome parked at column level is outside the marked root but still
+    // belongs to the pane under the pointer: scale the pane, not the page.
+    const pane = paneOfNode(target) ?? paneOfColumn(target)
     if (pane === null) return
     event.preventDefault()
     state.pointerPane = pane
@@ -85,7 +87,7 @@ export function installGestures(doc: Document, host: GestureHost, state: Gesture
   const onPointerDown = (event: Event): void => {
     const target = event.target instanceof Element ? event.target : null
     if (target === null) return
-    const pane = paneOfNode(target)
+    const pane = paneOfNode(target) ?? paneOfColumn(target)
     if (pane !== null) state.pointerPane = pane
   }
 

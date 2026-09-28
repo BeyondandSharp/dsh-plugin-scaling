@@ -48,9 +48,14 @@ dsh plugin --profile web add github:BeyondandSharp/dsh-plugin-scaling
 
 | 栏 | 缩放对象 |
 | --- | --- |
-| 左栏 | `[class*='sidebarCol']` 内经插槽锚点（`display: contents` 会穿透）找到的内容根 |
+| 左栏 | `[class*='sidebarCol']` 内包含 `[data-slot='sidebar.settings']` / `[data-slot='sidebar.panellist']` 等插槽锚点（`display: contents` 会穿透）的内容根 |
 | 中栏 | `[class*='centerCol']` 内包含 `[data-conversation-scroll]` 的内容根 |
 | 右栏 | `[data-dockkit-host='dock']` 的可见分栏 `> section` |
+
+两点与皮肤直接相关：
+
+- 穿透 `display: contents` 插槽锚点时，本插件沿**锚点自己的路径**下降到有盒的元素，而不是取第一个有盒的子节点。皮肤会把装饰（`maid-atelier` 的小女仆与角饰）`prepend` 进同一个插槽锚点，取「第一个子节点」会把装饰当成缩放对象。
+- 手势的归属先看「是否在已标记的内容根内」，**再回退到「是否在该栏的列内」**。皮肤把装饰挂在**栏级**（列内但在内容根之外：中栏的立绘舞台、侧栏的小女仆等）时，指针落在装饰上仍然缩放该栏，而不是放行给浏览器造成整页缩放。放到 `body` 的 portal（弹窗/菜单/提示）不在任何列内，一律不接管。
 
 ## 已知取舍与限制
 

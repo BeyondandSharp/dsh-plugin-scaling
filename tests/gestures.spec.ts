@@ -5,6 +5,7 @@ import type { GestureState } from '../src/client/gestures.ts'
 import { resolvePaneTargets, syncTargetMarks } from '../src/client/targets.ts'
 import type { PaneId } from '../src/client/targets.ts'
 import { buildShell, element } from './helpers/dom.ts'
+import type { ShellOptions } from './helpers/dom.ts'
 
 /** One recorded step call. */
 type Step = [PaneId, 1 | -1 | 0]
@@ -17,8 +18,8 @@ function wheel(target: EventTarget, init: WheelEventInit): boolean {
 }
 
 /** Build a shell, mark it, install gestures, and expose the recorded steps. */
-function setup(): { steps: Step[], state: GestureState, dispose: () => void } {
-  buildShell(document, { secondDockPane: true })
+function setup(options: ShellOptions = {}): { steps: Step[], state: GestureState, dispose: () => void } {
+  buildShell(document, { secondDockPane: true, ...options })
   syncTargetMarks(new Map(), resolvePaneTargets(document))
   const steps: Step[] = []
   const state = createGestureState()
@@ -67,6 +68,34 @@ describe('wheel over a pane', () => {
   it('ignores the shift-only and alt-only variants', () => {
     wheel(element(document, '.cv_root'), { shiftKey: true, deltaY: -100 })
     wheel(element(document, '.cv_root'), { altKey: true, deltaY: -100 })
+    expect(harness.steps).toEqual([])
+  })
+})
+
+describe('skin chrome at column level', () => {
+  beforeEach(() => {
+    harness.dispose()
+    harness = setup({ skin: true })
+  })
+
+  it('scales the owning pane instead of falling through to the browser page zoom', () => {
+    const ctrl = { ctrlKey: true, deltaY: -UNITS_PER_STEP }
+    for (const chrome of ['.sk_sidebarMascot', '.sk_sidebarCorners', '.sk_ornament']) {
+      expect(wheel(element(document, chrome), ctrl)).toBe(true)
+    }
+    expect(harness.steps).toEqual([['left', 1], ['left', 1], ['left', 1]])
+    expect(harness.state.pointerPane).toBe('left')
+    expect(wheel(element(document, '.sk_chatStage'), ctrl)).toBe(true)
+    expect(harness.steps.at(-1)).toEqual(['center', 1])
+    expect(wheel(element(document, '.sk_chatChrome'), ctrl)).toBe(true)
+    expect(harness.steps.at(-1)).toEqual(['center', 1])
+  })
+
+  it('still passes through a portalled popup outside every column', () => {
+    const portal = document.createElement('div')
+    portal.setAttribute('role', 'dialog')
+    document.body.append(portal)
+    expect(wheel(portal, { ctrlKey: true, deltaY: -UNITS_PER_STEP })).toBe(false)
     expect(harness.steps).toEqual([])
   })
 })

@@ -19,8 +19,8 @@ import {
 } from './storage.ts'
 import type { ZoomSteps } from './storage.ts'
 import {
-  PANE_IDS, clearTargetMarks, inlinePixelWidth, isExcludedSurface, isPaneStructureChange, paneOfNode,
-  resolvePaneTargets, syncTargetMarks,
+  PANE_IDS, clearTargetMarks, inlinePixelWidth, isExcludedSurface, isPaneStructureChange, paneOfColumn,
+  paneOfNode, resolvePaneTargets, syncTargetMarks,
 } from './targets.ts'
 import type { PaneId } from './targets.ts'
 
@@ -273,7 +273,7 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
   const shortcuts = installShortcuts(doc, ctx, {
     paneFor: (node) => {
       if (isExcludedSurface(node)) return null
-      return paneOfNode(node) ?? gestureState.pointerPane ?? 'center'
+      return paneOfNode(node) ?? paneOfColumn(node) ?? gestureState.pointerPane ?? 'center'
     },
     step,
   }, warn)

@@ -82,6 +82,12 @@ export function buildShell(doc: Document, options: ShellOptions = {}): HTMLEleme
   search.setAttribute('data-slot', 'sidebar.settings')
   sidebarRoot.append(search)
   sidebarSlot.append(sidebarRoot)
+  if (options.skin === true) {
+    // `maid-atelier` prepends its mascot and corner art into this same seam,
+    // ahead of the real root: the fixture keeps that ordering.
+    sidebarSlot.prepend(decoration(doc, 'sk_sidebarMascot'))
+    sidebarSlot.prepend(decoration(doc, 'sk_sidebarCorners'))
+  }
   sidebarCol.append(sidebarSlot)
 
   const centerCol = doc.createElement('div')
@@ -93,6 +99,15 @@ export function buildShell(doc: Document, options: ShellOptions = {}): HTMLEleme
   const composer = doc.createElement('textarea')
   scroll.append(composer)
   conversationRoot.append(scroll)
+  if (options.skin === true) {
+    // `maid-atelier` prepends the character stage into the column itself,
+    // outside the slot seam, and appends its chrome next to it.
+    const stage = decoration(doc, 'sk_chatStage')
+    stage.setAttribute('data-skin-chrome', 'chat-stage')
+    const chrome = decoration(doc, 'sk_chatChrome')
+    chrome.setAttribute('data-skin-chrome', 'chat-chrome')
+    centerCol.append(stage, chrome)
+  }
   centerCol.append(conversationRoot)
 
   frame.append(sidebarCol, centerCol)

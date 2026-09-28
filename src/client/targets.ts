@@ -30,9 +30,23 @@ const COLUMN_SELECTORS: Readonly<Record<PaneId, string>> = {
   right: "[class*='rightbarCol']",
 }
 
-/** Slot-tree anchors, most specific first; the first present one wins. */
+/**
+ * Slot-tree anchors, most specific first; the first present one wins.
+ *
+ * For the sidebar these are *content* anchors inside the real root, not the
+ * `[data-slot='sidebar']` seam itself: skins prepend their own chrome into that
+ * seam (`maid-atelier` prepends a mascot and corner art), so a seam-only anchor
+ * would let a decoration win the descent. The seam selector stays as the last
+ * resort.
+ */
 const ANCHORS: Readonly<Record<'left' | 'center', readonly string[]>> = {
-  left: ["[data-slot='sidebar']", "[data-slot='sidebar.settings']", "[role='tree']", "[class*='newSession']"],
+  left: [
+    "[data-slot='sidebar.settings']",
+    "[data-slot='sidebar.panellist']",
+    "[role='tree']",
+    "[class*='newSession']",
+    "[data-slot='sidebar']",
+  ],
   center: ['[data-conversation-scroll]'],
 }
 
@@ -105,14 +119,19 @@ export function hasInlinePixelWidth(element: Element): boolean {
 }
 
 /**
- * Descend through `display: contents` seams to the first node with a real box.
+ * Descend through `display: contents` seams to the boxed element that still
+ * contains the anchor. Following the anchor's own path (instead of the first
+ * boxed child) is what keeps skin chrome out: skins prepend their decorations
+ * into the same seam as the real root, so "first child" would mark a mascot.
  * @param element - start node (usually a column's direct child).
- * @returns the first boxed element, or undefined when the subtree is empty.
+ * @param anchor - the matched anchor inside that subtree.
+ * @returns the boxed element containing the anchor, or undefined when absent.
  */
-function firstBoxedDescendant(element: Element): Element | undefined {
+function boxedAncestorOfAnchor(element: Element, anchor: Element): Element | undefined {
   let current: Element | undefined = element
   while (current !== undefined && !hasLayoutBox(current)) {
-    current = asElement(current.firstElementChild)
+    const next = [...current.children].find(child => child.contains(anchor))
+    current = next ?? asElement(current.firstElementChild)
   }
   return current
 }
@@ -138,7 +157,7 @@ function resolveAnchored(column: Element, anchors: readonly string[]): HTMLEleme
     if (anchor.closest(EXCLUDED_SELECTOR) !== null) continue
     const seated = climbToColumnChild(column, anchor)
     if (seated === undefined) continue
-    const boxed = firstBoxedDescendant(seated)
+    const boxed = boxedAncestorOfAnchor(seated, anchor)
     if (boxed === undefined || !(boxed instanceof (boxed.ownerDocument.defaultView?.HTMLElement ?? HTMLElement))) continue
     return boxed
   }
@@ -255,6 +274,26 @@ export function isPaneStructureChange(records: readonly MutationRecord[]): boole
 
 /** Structural elements whose appearance or removal invalidates resolution. */
 const STRUCTURE_SELECTOR = "[class*='sidebarCol'], [class*='centerCol'], [class*='rightbarCol'], [data-slot='sidebar'], [data-conversation-scroll], [data-dockkit-host]"
+
+/**
+ * Pane whose grid column contains a node.
+ *
+ * Skins park their own chrome inside a column but outside the marked root
+ * (`maid-atelier` prepends a character stage into `.centerCol` and a mascot into
+ * the sidebar seam). A gesture over that chrome still belongs to the pane the
+ * user sees under the pointer, so it must scale the pane — never fall through to
+ * the browser's page zoom. Portalled popups are unaffected: they live under
+ * `document.body`, outside every column.
+ * @param node - an event target or the active element.
+ * @returns the enclosing pane, or null outside all three columns.
+ */
+export function paneOfColumn(node: Element | null): PaneId | null {
+  if (node === null) return null
+  for (const pane of PANE_IDS) {
+    if (node.closest(COLUMN_SELECTORS[pane]) !== null) return pane
+  }
+  return null
+}
 
 /**
  * Nearest marked pane ancestor of a node, skipping excluded subtrees.

@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   FIXED_OVERLAY_ATTRIBUTE, TARGET_ATTRIBUTE, clearTargetMarks, hasInlinePixelWidth, inlinePixelWidth,
-  isExcludedSurface, paneOfNode, resolvePaneTargets, syncTargetMarks,
+  isExcludedSurface, paneOfColumn, paneOfNode, resolvePaneTargets, syncTargetMarks,
 } from '../src/client/targets.ts'
 import { buildShell, element } from './helpers/dom.ts'
 
@@ -26,11 +26,14 @@ describe('resolvePaneTargets', () => {
     expect(targets.find(target => target.pane === 'center')?.element.className).toBe('cv_root')
   })
 
-  it('ignores a skin-style decoration node placed first in the column', () => {
+  it('ignores skin chrome prepended into the seam and into the column', () => {
     buildShell(document, { skin: true })
     const targets = resolvePaneTargets(document)
     expect(targets.find(target => target.pane === 'left')?.element.className).toBe('sb_root')
-    expect(document.querySelector('.sk_ornament')?.hasAttribute(TARGET_ATTRIBUTE)).toBe(false)
+    expect(targets.find(target => target.pane === 'center')?.element.className).toBe('cv_root')
+    for (const chrome of ['.sk_ornament', '.sk_sidebarMascot', '.sk_sidebarCorners', '.sk_chatStage', '.sk_chatChrome']) {
+      expect(document.querySelector(chrome)?.hasAttribute(TARGET_ATTRIBUTE)).toBe(false)
+    }
   })
 
   it('marks only the visible dock compartment and never the panel with the inline width', () => {
@@ -157,5 +160,29 @@ describe('paneOfNode / isExcludedSurface', () => {
     expect(isExcludedSurface(element(document, '[data-dockkit-float]'))).toBe(true)
     expect(isExcludedSurface(element(document, '.cv_root'))).toBe(false)
     expect(isExcludedSurface(null)).toBe(false)
+  })
+})
+
+describe('paneOfColumn', () => {
+  it('resolves skin chrome parked at column level, outside the marked root', () => {
+    buildShell(document, { skin: true })
+    sync(document)
+    for (const chrome of ['.sk_sidebarMascot', '.sk_sidebarCorners', '.sk_ornament']) {
+      expect(paneOfNode(element(document, chrome))).toBeNull()
+      expect(paneOfColumn(element(document, chrome))).toBe('left')
+    }
+    expect(paneOfColumn(element(document, '.sk_chatStage'))).toBe('center')
+    expect(paneOfColumn(element(document, '.sk_chatChrome'))).toBe('center')
+    expect(paneOfColumn(element(document, '[data-dockkit-host="dock"]'))).toBe('right')
+  })
+
+  it('stays out of portalled surfaces and the frame itself', () => {
+    buildShell(document)
+    const portal = document.createElement('div')
+    portal.setAttribute('role', 'dialog')
+    document.body.append(portal)
+    expect(paneOfColumn(portal)).toBeNull()
+    expect(paneOfColumn(document.body)).toBeNull()
+    expect(paneOfColumn(null)).toBeNull()
   })
 })
