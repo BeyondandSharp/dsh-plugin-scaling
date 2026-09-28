@@ -1,0 +1,122 @@
+/*
+ * Pane scaling — static rules.
+ *
+ * Every selector is scoped by `body[data-dsh-plugin-scaling]`, so nothing applies
+ * while the plugin is disabled, and no skin attribute or skin token is referenced:
+ * the plugin must behave identically on the official look and under any skin.
+ *
+ * The zoom factors, reverse zooms, and origins are inline custom properties on
+ * `html` written by the engine; the reverse zoom is written as a plain number so
+ * no `calc()` support is required inside `zoom`.
+ */
+
+/* --- zoom targets ------------------------------------------------------- */
+
+/*
+ * One rule per slot. The left sidebar and the centre window are one slot each;
+ * the right sidebar's dock splits into at most two columns (`right`, `right-1`),
+ * and each column keeps its own value. Every rule only publishes the slot's
+ * variables and its `zoom`; the compensation rules below consume them.
+ */
+
+body[data-dsh-plugin-scaling] [data-pane-scaling-slot='left'] {
+  --pane-scaling-own: var(--pane-scaling-left);
+  --pane-scaling-counter: var(--pane-scaling-counter-left);
+  --pane-scaling-origin-x: var(--pane-scaling-origin-x-left);
+  --pane-scaling-origin-y: var(--pane-scaling-origin-y-left);
+  zoom: var(--pane-scaling-left);
+}
+
+body[data-dsh-plugin-scaling] [data-pane-scaling-slot='center'] {
+  --pane-scaling-own: var(--pane-scaling-center);
+  --pane-scaling-counter: var(--pane-scaling-counter-center);
+  --pane-scaling-origin-x: var(--pane-scaling-origin-x-center);
+  --pane-scaling-origin-y: var(--pane-scaling-origin-y-center);
+  zoom: var(--pane-scaling-center);
+}
+
+body[data-dsh-plugin-scaling] [data-pane-scaling-slot='right'] {
+  --pane-scaling-own: var(--pane-scaling-right);
+  --pane-scaling-counter: var(--pane-scaling-counter-right);
+  --pane-scaling-origin-x: var(--pane-scaling-origin-x-right);
+  --pane-scaling-origin-y: var(--pane-scaling-origin-y-right);
+  zoom: var(--pane-scaling-right);
+}
+
+body[data-dsh-plugin-scaling] [data-pane-scaling-slot='right-1'] {
+  --pane-scaling-own: var(--pane-scaling-right-1);
+  --pane-scaling-counter: var(--pane-scaling-counter-right-1);
+  --pane-scaling-origin-x: var(--pane-scaling-origin-x-right-1);
+  --pane-scaling-origin-y: var(--pane-scaling-origin-y-right-1);
+  zoom: var(--pane-scaling-right-1);
+}
+
+/*
+ * Calibrated branch: the content root's own box grows with the zoom, so it is
+ * pulled back to the column's width. `fluid` (the default) needs no rule.
+ */
+body[data-dsh-plugin-scaling][data-pane-scaling-fill='compensated'] [data-pane-scaling-target] {
+  width: calc(100% / var(--pane-scaling-own));
+  height: calc(100% / var(--pane-scaling-own));
+}
+
+/*
+ * Element branch: a root that freezes its own width inline in px (the left
+ * sidebar holds its expanded width for the collapse slide, `SidebarRoot.tsx`).
+ * Inline styles outrank any author rule, and that frozen value is the host's own
+ * layout intent — it can differ from the column box mid-slide — so the
+ * compensation follows it: the engine writes `<frozen> / <zoom>` into
+ * `--pane-scaling-fill-width-<pane>` on every zoom change and structure sync.
+ * These are the only `!important` declarations in the sheet.
+ */
+body[data-dsh-plugin-scaling][data-pane-scaling-fill-left='compensated'] [data-pane-scaling-target='left'] {
+  width: var(--pane-scaling-fill-width-left) !important;
+}
+
+body[data-dsh-plugin-scaling][data-pane-scaling-fill-center='compensated'] [data-pane-scaling-target='center'] {
+  width: var(--pane-scaling-fill-width-center) !important;
+}
+
+body[data-dsh-plugin-scaling][data-pane-scaling-fill-right='compensated'] [data-pane-scaling-target='right'] {
+  width: var(--pane-scaling-fill-width-right) !important;
+}
+
+/*
+ * Calibrated branch: in-pane fixed overlays (the host's non-portalled tooltip,
+ * desktop-shell chrome) are scaled with their pane, so their size is restored.
+ * Only `[role='tooltip']` and elements the engine measured as really
+ * `position: fixed` are touched — never ordinary in-flow buttons.
+ */
+body[data-dsh-plugin-scaling][data-pane-scaling-fixed='scaled'] [data-pane-scaling-target] :is([role='tooltip'], [data-pane-scaling-fixed-overlay]),
+body[data-dsh-plugin-scaling][data-pane-scaling-fixed='contained'] [data-pane-scaling-target] :is([role='tooltip'], [data-pane-scaling-fixed-overlay]) {
+  zoom: var(--pane-scaling-counter);
+}
+
+/* Calibrated branch: the zoomed pane became the containing block, so the origin
+ * shift is undone as well. */
+body[data-dsh-plugin-scaling][data-pane-scaling-fixed='contained'] [data-pane-scaling-target] :is([role='tooltip'], [data-pane-scaling-fixed-overlay]) {
+  translate: calc(-1 * var(--pane-scaling-origin-x)) calc(-1 * var(--pane-scaling-origin-y));
+}
+
+/* --- percentage badge --------------------------------------------------- */
+
+body[data-dsh-plugin-scaling] [data-pane-scaling-badge] {
+  position: fixed;
+  z-index: 900; /* below the host's menu layer (1000) */
+  inset-block-end: 24px;
+  inset-inline-end: 24px;
+  pointer-events: none;
+  opacity: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, #0000001f);
+  border-radius: var(--dsw-radius-lg, 10px);
+  background: var(--dsw-alias-bg-layer-2, #ffffff);
+  box-shadow: var(--dsw-elevation-panel, 0 8px 24px #00000026);
+  color: var(--dsw-alias-label-primary, #1a1a1a);
+  font: 500 12px/16px system-ui, sans-serif;
+  transition: opacity 120ms ease-out;
+}
+
+body[data-dsh-plugin-scaling] [data-pane-scaling-badge][data-pane-scaling-badge-visible] {
+  opacity: 1;
+}

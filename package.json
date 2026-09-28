@@ -1,0 +1,66 @@
+{
+  "name": "@beyondandsharp/dsh-plugin-scaling",
+  "description": "Independent per-pane zoom for the DSH web shell: Ctrl+wheel over a pane, Ctrl+± / Ctrl+0 for the focused pane. Works with the official look and every skin.",
+  "icon": "assets/plugin-icon.svg",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BeyondandSharp/dsh-plugin-scaling.git"
+  },
+  "homepage": "https://github.com/BeyondandSharp/dsh-plugin-scaling#readme",
+  "bugs": {
+    "url": "https://github.com/BeyondandSharp/dsh-plugin-scaling/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh": ">=0.1.7-rc.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "jsdom": "29.1.1",
+    "lightningcss": "^1.32.0",
+    "tsdown": "0.22.14",
+    "vitest": "4.1.10"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "docs/DESIGN.md",
+    "LICENSE",
+    "locale/*.json",
+    "assets/plugin-icon.svg"
+  ]
+}

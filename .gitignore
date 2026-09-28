@@ -1,0 +1,5 @@
+node_modules/
+*.js.map
+*.tsbuildinfo
+.DS_Store
+pnpm-lock.yaml

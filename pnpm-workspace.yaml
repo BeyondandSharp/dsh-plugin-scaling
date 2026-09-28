@@ -1,0 +1,7 @@
+# Settings live here for pnpm 10+ (this is a single-package repo, so only settings).
+#
+# `@deepseek-ai/dsh` is declared as an optional peer purely as a compatibility
+# declaration: the running profile tree provides the host at runtime. Installing
+# it here would pull the whole DSH application (hundreds of packages and blocked
+# native build scripts) into a standalone plugin checkout for no benefit.
+autoInstallPeers: false
