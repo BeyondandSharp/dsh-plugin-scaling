@@ -22,8 +22,10 @@
 包内 `lib/` 已入库，安装后不需要再构建：
 
 ```sh
+# 本地安装
 dsh plugin --profile web add /root/dsh-plugin-scaling
-
+# 从npm安装
+dsh plugin --profile web add @beyondandsharp/dsh-plugin-scaling
 # 或从 git 安装
 dsh plugin --profile web add github:BeyondandSharp/dsh-plugin-scaling
 ```
