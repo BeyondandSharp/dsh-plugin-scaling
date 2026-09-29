@@ -1,6 +1,15 @@
 {
   "name": "@beyondandsharp/dsh-plugin-scaling",
   "description": "Independent per-pane zoom for the DSH web shell: Ctrl+wheel over a pane, Ctrl+± / Ctrl+0 for the focused pane. Works with the official look and every skin.",
+  "author": "BeyondandSharp",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "pane-zoom",
+    "ui-scaling",
+    "web"
+  ],
   "icon": "assets/plugin-icon.svg",
   "version": "0.1.0",
   "type": "module",
@@ -22,7 +31,8 @@
   },
   "scripts": {
     "build": "tsdown",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "pnpm test && pnpm run build"
   },
   "license": "MIT",
   "repository": {
