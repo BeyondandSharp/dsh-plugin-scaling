@@ -32,7 +32,8 @@
   "scripts": {
     "build": "tsdown",
     "test": "vitest run",
-    "prepublishOnly": "pnpm test && pnpm run build"
+    "prepublishOnly": "pnpm test && pnpm run build",
+    "release": "bash scripts/release.sh"
   },
   "license": "MIT",
   "repository": {

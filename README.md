@@ -78,6 +78,32 @@ pnpm test           # vitest + jsdom
 pnpm run build      # tsdown → lib/index.js + lib/client.js
 ```
 
+## 发版
+
+```sh
+pnpm release 0.2.0            # 也可以用 patch | minor | major | prerelease
+```
+
+`scripts/release.sh` 的流程：
+
+1. **预检**：仓库根、分支、工作区是否干净（有未提交改动直接拒绝，`--allow-dirty` 可跳过）、
+   当前版本、`npm`/`pnpm` 可用性。
+2. **版本校验**：必须**严格大于** `package.json` 里的版本，也要大于 npm 上已发布的最新版；
+   本地标签或 registry 上已存在同版本会直接中止。任何一步失败都会把 `package.json` 回滚。
+3. **测试与构建** → `pnpm test` + `pnpm run build`，并检查 `lib/index.js`、`lib/client.js`、
+   `cordis.patch.yml` 都在。
+4. **打包预览**：`npm pack --dry-run`，核对 `files` 白名单确实包含入口与文档。
+5. **提交与打标签**：`chore(pkg): bump version to X.Y.Z` + 附注标签 `X.Y.Z`（与仓库现有标签风格一致）。
+6. **同步上游**：推送当前分支与标签到 `origin`（`--no-push` 可跳过）。
+7. **`npm publish --dry-run`**：不写 registry，只打印将要发布的内容。
+8. **二次确认**：终端里确认后才真正 `npm publish`；npm 给出二次验证链接时，在浏览器完成授权，
+   脚本会等它结束（没有网页验证时可用 `--otp <code>`）。
+9. **校验**：轮询 `npm view <包>@<版本>`，确认 tag 指向正确后结束；命令没报错但 registry 查不到会
+   以非零退出并给出排查提示。
+
+其它开关：`--dry-run`（全流程演练，什么都不写）、`--no-publish`（只提交/打标签/推送）、
+`--tag <name>`（dist-tag，默认正式版 `latest`、预发布 `next`）、`--yes`（自动化场景跳过确认）。
+
 ## 许可
 
 MIT，见 [LICENSE](./LICENSE)。`build/` 下的两个构建预设逐字 vendored 自
