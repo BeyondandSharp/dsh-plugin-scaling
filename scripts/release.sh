@@ -172,8 +172,46 @@ fi
 untracked=$(git ls-files --others --exclude-standard || true)
 [[ -z $untracked ]] || warn "有未跟踪文件（不会被打包/提交）：$(echo "$untracked" | paste -sd' ' -)"
 
+# Push target: `origin` when it exists, else the branch's own upstream remote,
+# else the only remote there is. Repositories often name their remote after the
+# project (ssh://…/dsh-plugin-scaling.git) rather than `origin`.
+REMOTE=''
+if git remote get-url origin >/dev/null 2>&1; then
+  REMOTE=origin
+else
+  upstream_remote=$(git config --get "branch.$BRANCH.remote" || true)
+  if [[ -n $upstream_remote ]] && git remote get-url "$upstream_remote" >/dev/null 2>&1; then
+    REMOTE=$upstream_remote
+    warn "没有 origin，改用分支 $BRANCH 的上游远端：$REMOTE"
+  else
+    remote_count=0
+    remote_only=''
+    while IFS= read -r name; do
+      [[ -n $name ]] || continue
+      remote_count=$((remote_count + 1))
+      remote_only=$name
+    done <<< "$(git remote)"
+    if ((remote_count == 1)); then
+      REMOTE=$remote_only
+      warn "没有 origin，改用唯一远端：$REMOTE"
+    fi
+  fi
+fi
+
 if ((DO_PUSH == 1)); then
-  git remote get-url origin >/dev/null 2>&1 || die '没有名为 origin 的远端；用 --no-push 或先配置远端'
+  if [[ -z $REMOTE ]]; then
+    repo_url=$(read_field '.repository.url' 2>/dev/null | sed 's/^git+//' || true)
+    cat >&2 <<EOF
+
+没有可用的 git 远端：origin 不存在，分支 $BRANCH 没有上游，也没有唯一可用的远端。
+先配置一个再重跑，例如：
+  git remote add origin ${repo_url:-<你的仓库地址>}
+只做本地提交与标签（不同步上游）：
+  $SCRIPT_NAME $BUMP --no-push
+EOF
+    die '已中止'
+  fi
+  log "推送远端  $REMOTE"
   if [[ -z $(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) ]]; then
     warn "分支 $BRANCH 还没有上游，推送时会新建远端分支"
   fi
@@ -275,7 +313,7 @@ if ((DRY_RUN == 1)); then
   step "演练：git 与 npm publish --dry-run"
   log "将要提交：chore(pkg): bump version to $VERSION"
   log "将要打标签：$VERSION"
-  ((DO_PUSH == 1)) && log "将要推送：origin $BRANCH + 标签 $VERSION"
+  ((DO_PUSH == 1)) && log "将要推送：$REMOTE $BRANCH + 标签 $VERSION"
   "$NPM" "${publish_base[@]}" --dry-run
   git checkout -- package.json
   ok "演练完成：未提交、未打标签、未推送、未发布（package.json 回到 $CURRENT）"
@@ -300,9 +338,9 @@ ok "已提交并打标签 $VERSION"
 
 if ((DO_PUSH == 1)); then
   step "同步上游"
-  git push origin "HEAD:refs/heads/$BRANCH"
-  git push origin "refs/tags/$VERSION"
-  ok "已推送分支 $BRANCH 与标签 $VERSION"
+  git push "$REMOTE" "HEAD:refs/heads/$BRANCH"
+  git push "$REMOTE" "refs/tags/$VERSION"
+  ok "已推送分支 $BRANCH 与标签 $VERSION 到 $REMOTE"
 else
   warn '按 --no-push 跳过同步上游'
 fi
@@ -345,7 +383,7 @@ publish_args=("${publish_base[@]}")
 if ! "$NPM" "${publish_args[@]}"; then
   warn 'npm publish 失败。提交、标签、推送都已存在，处理完后单条重试：'
   warn "  $NPM publish --access public --tag $DIST_TAG"
-  warn "  （整条回滚：git tag -d $VERSION && git push origin :refs/tags/$VERSION && git reset --hard HEAD~1 && git push origin HEAD --force-with-lease）"
+  warn "  （整条回滚：git tag -d $VERSION && git push $REMOTE :refs/tags/$VERSION && git reset --hard HEAD~1 && git push $REMOTE HEAD --force-with-lease）"
   exit 1
 fi
 ok 'npm publish 命令没有报错'
@@ -374,5 +412,9 @@ esac
 step "完成"
 log "$NAME@$VERSION · dist-tag=$DIST_TAG"
 log "https://www.npmjs.com/package/$NAME/v/$VERSION"
-log "提交 chore(pkg): bump version to $VERSION · 标签 $VERSION"
+if [[ -n $REMOTE ]]; then
+  log "提交 chore(pkg): bump version to $VERSION · 标签 $VERSION → $REMOTE"
+else
+  log "提交 chore(pkg): bump version to $VERSION · 标签 $VERSION（未推送）"
+fi
 ok '发布流程结束'
