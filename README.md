@@ -87,7 +87,9 @@ pnpm release 0.2.0            # 也可以用 patch | minor | major | prerelease
 `scripts/release.sh` 的流程：
 
 1. **预检**：仓库根、分支、工作区是否干净（有未提交改动直接拒绝，`--allow-dirty` 可跳过）、
-   当前版本、`npm`/`pnpm` 可用性。
+   当前版本、`npm`/`pnpm` 可用性、**npm 登录状态**、推送远端（`origin` → 分支上游 → 唯一远端）。
+   未登录时会直接执行 `npm login`/`pnpm login` 并等待你完成登录，然后继续（非交互终端会直接报错中止，
+   以免把提交/标签/推送做完才发现没登录）。
 2. **版本校验**：必须**严格大于** `package.json` 里的版本，也要大于 npm 上已发布的最新版；
    本地标签或 registry 上已存在同版本会直接中止。任何一步失败都会把 `package.json` 回滚。
 3. **测试与构建** → `pnpm test` + `pnpm run build`，并检查 `lib/index.js`、`lib/client.js`、

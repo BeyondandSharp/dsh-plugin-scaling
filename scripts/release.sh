@@ -36,6 +36,7 @@ usage() {
 
 选项:
   --otp <code>    一次性验证码（没有网页二次验证时用）
+                  未登录 npm 时脚本会自动执行 npm/pnpm login 并等待登录完成
   --tag <name>    npm dist-tag（默认：正式版 latest，预发布版 next）
   --preid <id>    prerelease 的预发布标识（默认 rc）
   --dry-run       全流程演练：校验、测试、构建、打包预览、`npm publish --dry-run`，不提交/打标签/推送/发布
@@ -152,6 +153,37 @@ read_field() {
   node -e "const p=JSON.parse(require('fs').readFileSync('package.json','utf8'));process.stdout.write(String(p$1))"
 }
 
+# `whoami` is not enough: some clients exit 0 with an empty user when logged out,
+# and a failing one must not trip `set -e`/`pipefail` — a logged-out client is an
+# expected state here, not an error.
+npm_user() {
+  local out
+  out=$("$NPM" whoami 2>/dev/null || true)
+  printf '%s' "${out//[[:space:]]/}"
+}
+
+# Make sure the registry accepts publishes. A missing login is handled here (and
+# once more right before publishing) by running the client's own login command
+# and waiting for the maintainer to finish it.
+ensure_npm_auth() {
+  local user
+  user=$(npm_user)
+  if [[ -n $user ]]; then
+    log "npm 已登录  $user"
+    return 0
+  fi
+  if ((ASSUME_YES == 1)) || [[ ! -t 0 ]]; then
+    die "npm 未登录，且当前不是可交互终端：先手动执行 $NPM login（或去掉 --yes 让脚本引导登录）再重跑"
+  fi
+  warn "npm 未登录，进入 $NPM login；请在浏览器/终端里完成登录，脚本会等它结束"
+  if ! "$NPM" login; then
+    warn "$NPM login 退出码非 0"
+  fi
+  user=$(npm_user)
+  [[ -n $user ]] || die "登录仍未成功（$NPM whoami 为空）：手动执行 $NPM login 后重跑"
+  ok "已登录  $user"
+}
+
 NAME=$(read_field '.name')
 CURRENT=$(read_field '.version')
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
@@ -215,6 +247,12 @@ EOF
   if [[ -z $(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) ]]; then
     warn "分支 $BRANCH 还没有上游，推送时会新建远端分支"
   fi
+fi
+
+# Login first, while nothing has been written yet: the tag and the upstream push
+# happen before the publish, so an expired session must not surface that late.
+if ((DO_PUBLISH == 1 && DRY_RUN == 0)); then
+  ensure_npm_auth
 fi
 
 # --- version check -----------------------------------------------------------
@@ -371,7 +409,7 @@ if ((ASSUME_YES == 0)); then
 fi
 
 step "发布到 npm"
-"$NPM" whoami >/dev/null 2>&1 || die 'npm 未登录：先 npm login（提交、标签、推送已保留）'
+ensure_npm_auth
 if [[ -z $OTP && ! -t 0 ]]; then
   warn '当前不是交互终端，npm 的网页二次验证可能无法完成'
 fi
