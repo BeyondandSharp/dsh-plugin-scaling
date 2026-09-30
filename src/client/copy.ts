@@ -25,8 +25,8 @@ function columnSuffix(slot: SlotId): string {
   return match === null ? '' : match[1] ?? ''
 }
 
-const ZH_NAMES = { left: '左栏', center: '中栏', right: '右栏' } as const
-const EN_NAMES = { left: 'Left', center: 'Center', right: 'Right' } as const
+const ZH_NAMES = { left: '左栏', center: '中栏', right: '右栏', preview: '文件预览' } as const
+const EN_NAMES = { left: 'Left', center: 'Center', right: 'Right', preview: 'File preview' } as const
 
 const ZH: PluginCopy = {
   slot: slot => {

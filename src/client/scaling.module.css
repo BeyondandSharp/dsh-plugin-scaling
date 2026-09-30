@@ -7,7 +7,9 @@
  *
  * The zoom factors, reverse zooms, and origins are inline custom properties on
  * `html` written by the engine; the reverse zoom is written as a plain number so
- * no `calc()` support is required inside `zoom`.
+ * no `calc()` support is required inside `zoom`. The scaling mechanism itself
+ * (`zoom`, or `transform` where `zoom` cannot be trusted with `border-image`)
+ * is picked once by the engine and published as a body attribute.
  */
 
 /* --- zoom targets ------------------------------------------------------- */
@@ -17,6 +19,13 @@
  * the right sidebar's dock splits into at most two columns (`right`, `right-1`),
  * and each column keeps its own value. Every rule only publishes the slot's
  * variables and its `zoom`; the compensation rules below consume them.
+ *
+ * The host portals its hover cards to `body`, outside every column, so the
+ * changed-files diff preview would otherwise reach the browser's page zoom
+ * (`Ctrl+wheel` over it zoomed the whole app). It is its own slot instead: the
+ * card carries the mark — so a gesture anywhere on the card belongs to the
+ * preview — while the scale applies to the diff inside it, and `Ctrl+wheel`
+ * leaves the three panes' values untouched.
  */
 
 body[data-dsh-plugin-scaling] [data-pane-scaling-slot='left'] {
@@ -24,6 +33,7 @@ body[data-dsh-plugin-scaling] [data-pane-scaling-slot='left'] {
   --pane-scaling-counter: var(--pane-scaling-counter-left);
   --pane-scaling-origin-x: var(--pane-scaling-origin-x-left);
   --pane-scaling-origin-y: var(--pane-scaling-origin-y-left);
+  --pane-scaling-toolbar: var(--pane-scaling-toolbar-left);
   zoom: var(--pane-scaling-left);
 }
 
@@ -32,6 +42,7 @@ body[data-dsh-plugin-scaling] [data-pane-scaling-slot='center'] {
   --pane-scaling-counter: var(--pane-scaling-counter-center);
   --pane-scaling-origin-x: var(--pane-scaling-origin-x-center);
   --pane-scaling-origin-y: var(--pane-scaling-origin-y-center);
+  --pane-scaling-toolbar: var(--pane-scaling-toolbar-center);
   zoom: var(--pane-scaling-center);
 }
 
@@ -40,6 +51,7 @@ body[data-dsh-plugin-scaling] [data-pane-scaling-slot='right'] {
   --pane-scaling-counter: var(--pane-scaling-counter-right);
   --pane-scaling-origin-x: var(--pane-scaling-origin-x-right);
   --pane-scaling-origin-y: var(--pane-scaling-origin-y-right);
+  --pane-scaling-toolbar: var(--pane-scaling-toolbar-right);
   zoom: var(--pane-scaling-right);
 }
 
@@ -48,7 +60,82 @@ body[data-dsh-plugin-scaling] [data-pane-scaling-slot='right-1'] {
   --pane-scaling-counter: var(--pane-scaling-counter-right-1);
   --pane-scaling-origin-x: var(--pane-scaling-origin-x-right-1);
   --pane-scaling-origin-y: var(--pane-scaling-origin-y-right-1);
+  --pane-scaling-toolbar: var(--pane-scaling-toolbar-right-1);
   zoom: var(--pane-scaling-right-1);
+}
+
+body[data-dsh-plugin-scaling] [data-pane-scaling-slot='preview'] {
+  --pane-scaling-own: var(--pane-scaling-preview);
+  --pane-scaling-counter: var(--pane-scaling-counter-preview);
+  --pane-scaling-origin-x: var(--pane-scaling-origin-x-preview);
+  --pane-scaling-origin-y: var(--pane-scaling-origin-y-preview);
+  --pane-scaling-toolbar: var(--pane-scaling-toolbar-preview);
+}
+
+/*
+ * The card keeps its own frame — its padding, radius, shadow and anchor-relative
+ * placement are the host's, and scaling them moved the card off its anchor. The
+ * diff inside it scales instead, and because `zoom` scales the element's layout
+ * box as well, the card still grows to hold it. That layout part is also why the
+ * preview never takes the `transform` arm: a transform would paint the diff
+ * larger without reserving the room, letting it spill out of the card.
+ */
+body[data-dsh-plugin-scaling] [data-pane-scaling-slot='preview'] [data-changes-hover-preview] {
+  zoom: var(--pane-scaling-preview);
+}
+
+/* --- scaling mechanism --------------------------------------------------- */
+
+/*
+ * `zoom` (declared by the pane/slot rules above) is the default mechanism.
+ * Gecko's `zoom` is a layout-time scale that is not applied to the
+ * `border-image` nine-piece geometry, so a skin ribbon cut from symmetric
+ * artwork renders with a correct leading cap and a stretched trailing cap —
+ * the engine selects `transform` there instead (see `mechanism.ts`).
+ * `scale()` is applied to the painted result, so border-image, backgrounds,
+ * filters and scrollbars all stay uniform.
+ *
+ * A transform does not participate in layout, so the element has to be laid out
+ * at `1 / zoom` of its box and scaled back up: that is what the width/height
+ * compensation here is for. A pane that keeps its toolbar at 1:1 inside the
+ * same flow subtracts that toolbar's height first (`--pane-scaling-toolbar`,
+ * published per slot by the engine) — otherwise the scaled content box would
+ * run exactly one toolbar taller than the pane. `transform-origin` matches
+ * `zoom`'s own anchor (the element's top-left). A pane whose root freezes its
+ * width inline still needs the `!important` rule further down — an inline style
+ * outranks this rule, and the engine feeds it the frozen value divided by the
+ * zoom.
+ *
+ * `flex: 0 0 auto` keeps that shrunken box from being undone by the flex
+ * algorithm: the right sidebar's dock section is `flex: 1 1 auto`, so a bare
+ * `width` was grown straight back to the cell (and at zoom < 1 a shrinkable
+ * box would have been squeezed down), leaving the pane wider than its column
+ * and its top-row controls pushed outside the clipped column.
+ *
+ * The stamp goes on the element the engine really scales, which for a pane
+ * that also holds its toolbar is the content below that toolbar, not the root
+ * (`scaledElementFor`). An identity `transform: scale(1)` is never stamped: it
+ * buys nothing but still makes the element a containing block and a stacking
+ * context, which hid the conversation header's corner controls in a real Gecko
+ * session.
+ */
+body[data-dsh-plugin-scaling][data-pane-scaling-mechanism='transform'] [data-pane-scaling-transformed] {
+  zoom: 1;
+  transform: scale(var(--pane-scaling-own));
+  transform-origin: top left;
+  flex: 0 0 auto;
+  width: calc(100% / var(--pane-scaling-own));
+  height: calc((100% - var(--pane-scaling-toolbar, 0px)) / var(--pane-scaling-own));
+}
+
+/*
+ * In the transform arm the slot roots never zoom: the stamped element carries
+ * the scale instead, and it is not always the root itself — a pane that also
+ * holds its toolbar is stamped one level down, which would leave the root's
+ * own `zoom` scaling the toolbar (and double-scaling the content).
+ */
+body[data-dsh-plugin-scaling][data-pane-scaling-mechanism='transform'] [data-pane-scaling-slot] {
+  zoom: 1;
 }
 
 /*
@@ -96,6 +183,25 @@ body[data-dsh-plugin-scaling][data-pane-scaling-fixed='contained'] [data-pane-sc
  * shift is undone as well. */
 body[data-dsh-plugin-scaling][data-pane-scaling-fixed='contained'] [data-pane-scaling-target] :is([role='tooltip'], [data-pane-scaling-fixed-overlay]) {
   translate: calc(-1 * var(--pane-scaling-origin-x)) calc(-1 * var(--pane-scaling-origin-y));
+}
+
+/* --- pane chrome --------------------------------------------------------- */
+
+/*
+ * The conversation header keeps its own scale. It is the pane's toolbar —
+ * session title, view tabs, the right sidebar's toggle — and a toolbar that
+ * grows with the content only costs room. The reverse zoom renders the header's
+ * own layout at 1:1 while the pane's zoom still scales everything below it, and
+ * the header's box still spans the pane: a counter-zoomed box and its contents
+ * scale back to the same size, so the content beneath it starts at the header's
+ * natural height.
+ *
+ * Only the `zoom` arm needs this: the transform arm stamps the content below
+ * the toolbar instead, which leaves the header outside the transform
+ * altogether (and a nested `zoom` would fight that arm's painted scale).
+ */
+body[data-dsh-plugin-scaling]:not([data-pane-scaling-mechanism='transform']) [data-pane-scaling-slot] [data-slot='conversation.header'] {
+  zoom: var(--pane-scaling-counter);
 }
 
 /* --- percentage badge --------------------------------------------------- */

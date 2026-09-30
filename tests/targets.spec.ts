@@ -178,6 +178,33 @@ describe('hasInlinePixelWidth / inlinePixelWidth', () => {
   })
 })
 
+describe('floating preview resolution', () => {
+  it('resolves the portalled hover card as its own slot', () => {
+    buildShell(document, { withPreview: true })
+    sync(document)
+    const card = element(document, '.hc_card')
+    expect(card.getAttribute(TARGET_ATTRIBUTE)).toBe('preview')
+    expect(card.getAttribute('data-pane-scaling-slot')).toBe('preview')
+    // The card, not the diff content inside it: a zoom on the inner box would
+    // overflow the card's own background.
+    expect(element(document, '[data-changes-hover-preview]').hasAttribute(TARGET_ATTRIBUTE)).toBe(false)
+  })
+
+  it('attributes a gesture inside the card to the preview slot', () => {
+    buildShell(document, { withPreview: true })
+    sync(document)
+    expect(slotForTarget(element(document, '.hc_line'), null)).toBe('preview')
+    // A portalled card sits outside every column, so the column fallback misses.
+    expect(paneOfColumn(element(document, '.hc_line'))).toBeNull()
+  })
+
+  it('stays out of the way when no preview is mounted', () => {
+    buildShell(document)
+    sync(document)
+    expect(document.querySelector("[data-pane-scaling-target='preview']")).toBeNull()
+  })
+})
+
 describe('paneOfNode / isExcludedSurface', () => {
   it('finds the enclosing pane from a nested node', () => {
     buildShell(document)
@@ -187,13 +214,16 @@ describe('paneOfNode / isExcludedSurface', () => {
     expect(paneOfNode(null)).toBeNull()
   })
 
-  it('excludes the host zoom surfaces, the terminal, and floating panels', () => {
+  it('excludes the host zoom surfaces, the terminal, floating panels, and the pane toolbar', () => {
     buildShell(document)
     sync(document)
     const scroll = element(document, '[data-conversation-scroll]')
     scroll.setAttribute('data-document-zoom-scrollport', '')
     expect(isExcludedSurface(scroll)).toBe(true)
     expect(isExcludedSurface(element(document, '[data-dockkit-float]'))).toBe(true)
+    // The conversation header keeps the pane's chrome out of the pane's scale,
+    // so its gestures belong to the browser's global zoom.
+    expect(isExcludedSurface(element(document, "[data-slot='conversation.header'] button"))).toBe(true)
     expect(isExcludedSurface(element(document, '.cv_root'))).toBe(false)
     expect(isExcludedSurface(null)).toBe(false)
   })

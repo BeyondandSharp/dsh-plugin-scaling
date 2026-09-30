@@ -13,6 +13,8 @@ export interface ShellOptions {
   splitRight?: boolean
   /** Put an xterm screen inside the right dock pane. */
   withTerminal?: boolean
+  /** Mount the host's changed-files diff hover card, portalled to `body`. */
+  withPreview?: boolean
 }
 
 /** Query a required element, throwing with the selector when absent. */
@@ -98,11 +100,21 @@ export function buildShell(doc: Document, options: ShellOptions = {}): HTMLEleme
   centerCol.className = 'af_centerCol'
   const conversationRoot = doc.createElement('div')
   conversationRoot.className = 'cv_root'
+  // The host's conversation header seam: the pane's toolbar, which the plugin
+  // keeps out of the pane's scale and leaves to the browser's global zoom.
+  const header = doc.createElement('div')
+  header.setAttribute('data-slot', 'conversation.header')
+  header.style.display = 'contents'
+  const headerBox = doc.createElement('header')
+  const headerButton = doc.createElement('button')
+  headerButton.textContent = 'header action'
+  headerBox.append(headerButton)
+  header.append(headerBox)
   const scroll = doc.createElement('div')
   scroll.setAttribute('data-conversation-scroll', '')
   const composer = doc.createElement('textarea')
   scroll.append(composer)
-  conversationRoot.append(scroll)
+  conversationRoot.append(header, scroll)
   if (options.skin === true) {
     // `maid-atelier` prepends the character stage into the column itself,
     // outside the slot seam, and appends its chrome next to it.
@@ -157,5 +169,25 @@ export function buildShell(doc: Document, options: ShellOptions = {}): HTMLEleme
   }
 
   doc.body.append(frame)
+  if (options.withPreview === true) doc.body.append(hoverPreview(doc))
   return frame
+}
+
+/**
+ * The host's changed-files diff hover card: `position: fixed`, portalled to
+ * `body`, with the preview's own `data-` anchor inside it.
+ */
+function hoverPreview(doc: Document): HTMLDivElement {
+  const card = doc.createElement('div')
+  card.className = 'hc_card'
+  card.style.position = 'fixed'
+  const content = doc.createElement('div')
+  content.className = 'hc_content'
+  content.setAttribute('data-changes-hover-preview', '')
+  const line = doc.createElement('div')
+  line.className = 'hc_line'
+  line.textContent = '-const value = 1'
+  content.append(line)
+  card.append(content)
+  return card
 }

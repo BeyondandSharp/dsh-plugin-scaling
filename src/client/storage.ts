@@ -60,7 +60,10 @@ export function zoomToStep(zoom: number): number {
  * @returns the default step per slot.
  */
 export function defaultSteps(): ZoomSteps {
-  return { left: DEFAULT_STEP, center: DEFAULT_STEP, right: DEFAULT_STEP, 'right-1': DEFAULT_STEP }
+  return {
+    left: DEFAULT_STEP, center: DEFAULT_STEP, right: DEFAULT_STEP, 'right-1': DEFAULT_STEP,
+    preview: DEFAULT_STEP,
+  }
 }
 
 /**
@@ -94,7 +97,8 @@ export function decodeZoom(raw: string | null): ZoomSteps {
  * Encode the state as zoom factors with a fixed key order, so the stored
  * document matches the documented schema (`{"left":1.05,...}`) and equal
  * states produce equal strings. `right-1` is always written: it is the second
- * right-dock column's value, applied whenever that column exists.
+ * right-dock column's value, applied whenever that column exists. So is
+ * `preview`, the changed-files diff hover card's own value.
  * @param steps - the current state.
  * @returns the stored document.
  */
@@ -104,6 +108,7 @@ export function encodeZoom(steps: ZoomSteps): string {
     center: stepToZoom(steps.center),
     right: stepToZoom(steps.right),
     'right-1': stepToZoom(steps['right-1']),
+    preview: stepToZoom(steps.preview),
   })
 }
 

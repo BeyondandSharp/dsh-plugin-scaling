@@ -7,11 +7,27 @@
  * content root *inside* a column.
  */
 
-/** The three independently scalable panes, in DOM order. */
-export const PANE_IDS = ['left', 'center', 'right'] as const
+/**
+ * The independently scalable panes: the three grid columns plus the floating
+ * file preview that the host portals to `body` when a changed-file row is
+ * hovered.
+ */
+export const PANE_IDS = ['left', 'center', 'right', 'preview'] as const
 
 /** One scalable pane. */
 export type PaneId = (typeof PANE_IDS)[number]
+
+/**
+ * Panes that own a grid column.
+ *
+ * The floating preview has no column: it is a `position: fixed` hover card
+ * under `document.body`, resolved from its own anchor, and it takes no part in
+ * column geometry, fill compensation, or dock splitting.
+ */
+export const COLUMN_PANES = ['left', 'center', 'right'] as const
+
+/** One grid-column pane. */
+export type ColumnPane = (typeof COLUMN_PANES)[number]
 
 /**
  * One independently scaled slot. The left sidebar and the centre window are one
@@ -26,13 +42,21 @@ export type SlotId = PaneId | `right-${number}`
  * columns (`TabLayout` throws for any other docked shape), so the list is fixed;
  * `right-1` simply has no root while the right sidebar is unsplit.
  */
-export const SLOT_IDS = ['left', 'center', 'right', 'right-1'] as const
+export const SLOT_IDS = ['left', 'center', 'right', 'right-1', 'preview'] as const
 
 /** Attribute stamped on each resolved pane content root. */
 export const TARGET_ATTRIBUTE = 'data-pane-scaling-target'
 
 /** Attribute stamped on each resolved slot root (a pane, or one right column). */
 export const SLOT_ATTRIBUTE = 'data-pane-scaling-slot'
+
+/**
+ * Attribute stamped on a slot root the transform arm actually scales, i.e. the
+ * mechanism is `transform` *and* the pane is not at 100%. An identity transform
+ * would only add a containing block and a stacking context, so unscaled panes
+ * keep the `zoom` arm.
+ */
+export const TRANSFORM_ATTRIBUTE = 'data-pane-scaling-transformed'
 
 /** Marks an in-pane `position: fixed` overlay that needs counter-scaling. */
 export const FIXED_OVERLAY_ATTRIBUTE = 'data-pane-scaling-fixed-overlay'
@@ -65,11 +89,21 @@ export function paneOfSlot(slot: SlotId): PaneId {
  * class-substring selector is stable across hashes; the shell's own e2e tests
  * rely on the same convention.
  */
-const COLUMN_SELECTORS: Readonly<Record<PaneId, string>> = {
+const COLUMN_SELECTORS: Readonly<Record<ColumnPane, string>> = {
   left: "[class*='sidebarCol']",
   center: "[class*='centerCol']",
   right: "[class*='rightbarCol']",
 }
+
+/**
+ * Floating surfaces that are zoomable on their own.
+ *
+ * The host's hover cards are portalled to `body`, so they are outside every
+ * column and the pane resolution never reaches them; the changed-files diff
+ * preview marks its own content with a stable `data-` attribute, which is the
+ * anchor this plugin climbs from.
+ */
+const FLOATING_ANCHORS = ['[data-changes-hover-preview]'] as const
 
 /**
  * Slot-tree anchors, most specific first; the first present one wins.
@@ -95,8 +129,58 @@ const ANCHORS: Readonly<Record<'left' | 'center', readonly string[]>> = {
 const DOCK_PANE_SELECTOR = "[data-dockkit-host='dock']:not([hidden]) > section"
 const DOCK_PANE_FALLBACK = "[data-sidebar-right-panel] [data-dockkit-pane]"
 
-/** Subtrees that own their own Ctrl+wheel gesture and are never a target. */
-const EXCLUDED_SELECTOR = '.xterm, [data-dockkit-float]'
+/**
+ * The pane's own toolbar, if it has one: the conversation header. It is kept
+ * out of the pane's scale (see the stylesheet) and out of the transform arm's
+ * stamped element (see the engine), and its gestures belong to the browser's
+ * global page zoom.
+ */
+export const TOOLBAR_SELECTOR = "[data-slot='conversation.header']"
+
+/**
+ * Subtrees that own their own Ctrl+wheel gesture and are never a target.
+ *
+ * The conversation header is the pane's toolbar and is deliberately kept out
+ * of the pane's scale, so pointing at it hands Ctrl+wheel to the browser: the
+ * page zooms globally, header included. That is the only way a page can offer
+ * the global zoom for one strip — script cannot drive the browser's own page
+ * zoom.
+ */
+const EXCLUDED_SELECTOR = `.xterm, [data-dockkit-float], ${TOOLBAR_SELECTOR}`
+
+/**
+ * Descend to the first boxed element inside a subtree (`display: contents`
+ * seams carry no box).
+ * @param element - subtree root, itself boxed or not.
+ * @returns the element to measure, or undefined when the seam is empty.
+ */
+export function boxedDescendant(element: Element | null): HTMLElement | undefined {
+  let current: Element | null = element
+  while (current !== null && !hasLayoutBox(current)) current = current.firstElementChild
+  return (current as HTMLElement | null) ?? undefined
+}
+
+/**
+ * The element one pane's transform arm should scale.
+ *
+ * A root that also holds the pane's toolbar (the conversation header) scales
+ * only the content below it: a transform on the root would make it the
+ * containing block for the toolbar's own `position: fixed` chrome — the host
+ * documents that hazard for this very column — and the toolbar is meant to
+ * stay at 1:1 regardless. Panes without a toolbar scale their root, as before.
+ * @param root - the marked pane content root.
+ * @returns the element to stamp, which is `root` when there is nothing to skip.
+ */
+export function scaledElementFor(root: HTMLElement): HTMLElement {
+  if (root.querySelector(TOOLBAR_SELECTOR) === null) return root
+  const holdsToolbar = (element: Element): boolean =>
+    element.matches(TOOLBAR_SELECTOR) || element.querySelector(TOOLBAR_SELECTOR) !== null
+  const anchor = root.querySelector("[data-conversation-scroll]")
+  const content = [...root.children].filter(child => !holdsToolbar(child))
+  const chosen = content.find(child => anchor !== null && child.contains(anchor))
+    ?? content.find(child => boxedDescendant(child) !== undefined)
+  return (chosen === undefined ? undefined : boxedDescendant(chosen)) ?? root
+}
 
 /** Terminal screens keep their own wheel handling and never reflow for zoom. */
 const TERMINAL_SELECTOR = '.xterm'
@@ -115,6 +199,12 @@ function asElement(node: Element | null): Element | undefined {
 }
 
 /** Read the used `display` value, tolerating a missing `getComputedStyle`. */
+/** The element's `position`; the inline value covers engines without a style sheet. */
+function positionOf(element: Element): string {
+  const inline = (element as HTMLElement).style?.position
+  return element.ownerDocument.defaultView?.getComputedStyle(element).position || inline || ''
+}
+
 function displayOf(element: Element): string {
   const inline = (element as HTMLElement).style?.display
   if (inline === 'contents') return 'contents'
@@ -253,7 +343,7 @@ function resolveDockedSections(column: Element): Array<{ slot: SlotId, element: 
  */
 export function resolvePaneTargets(doc: Document): PaneTarget[] {
   const targets: PaneTarget[] = []
-  for (const pane of PANE_IDS) {
+  for (const pane of COLUMN_PANES) {
     const column = asElement(doc.querySelector(COLUMN_SELECTORS[pane]))
     if (column === undefined) continue
     if (pane === 'right') {
@@ -263,7 +353,40 @@ export function resolvePaneTargets(doc: Document): PaneTarget[] {
     const element = resolveAnchored(column, ANCHORS[pane])
     if (element !== undefined) targets.push({ pane, slot: pane, element })
   }
+  for (const element of resolveFloatingTargets(doc)) targets.push({ pane: 'preview', slot: 'preview', element })
   return targets
+}
+
+/**
+ * Resolve the floating preview surfaces currently mounted.
+ *
+ * Each anchor stands for the whole hover card: a `zoom` on the marked content
+ * alone would overflow the card's own box, so the marked root is the card —
+ * the outermost `position: fixed` boxed ancestor inside `body`. Cards that
+ * never reach `body` (an inline variant) fall back to the anchor's own boxed
+ * element, which keeps the plugin useful without depending on the host's
+ * positioning choice.
+ * @param doc - the product document.
+ * @returns one root per mounted preview card.
+ */
+function resolveFloatingTargets(doc: Document): HTMLElement[] {
+  const roots: HTMLElement[] = []
+  for (const anchor of doc.querySelectorAll(FLOATING_ANCHORS.join(', '))) {
+    const root = floatingRootOf(anchor)
+    if (root !== undefined) roots.push(root)
+  }
+  return roots
+}
+
+/** Outermost fixed-position boxed ancestor of a floating anchor, inside `body`. */
+function floatingRootOf(anchor: Element): HTMLElement | undefined {
+  let current = boxedDescendant(anchor)
+  let root: HTMLElement | undefined
+  while (current !== undefined && current !== current.ownerDocument.body) {
+    if (positionOf(current) === 'fixed') root = current
+    current = current.parentElement === null ? undefined : current.parentElement
+  }
+  return root ?? boxedDescendant(anchor)
 }
 
 /**
@@ -286,6 +409,7 @@ export function syncTargetMarks(
     if (desiredMap.get(element) === pane) continue
     if (element.getAttribute(TARGET_ATTRIBUTE) === pane) element.removeAttribute(TARGET_ATTRIBUTE)
     element.removeAttribute(SLOT_ATTRIBUTE)
+    element.removeAttribute(TRANSFORM_ATTRIBUTE)
   }
 
   const claimed = new Map<HTMLElement, PaneId>()
@@ -307,6 +431,7 @@ export function clearTargetMarks(owned: ReadonlyMap<HTMLElement, PaneId>): void 
   for (const [element, pane] of owned) {
     if (element.getAttribute(TARGET_ATTRIBUTE) === pane) element.removeAttribute(TARGET_ATTRIBUTE)
     element.removeAttribute(SLOT_ATTRIBUTE)
+    element.removeAttribute(TRANSFORM_ATTRIBUTE)
   }
 }
 
@@ -335,9 +460,13 @@ export function isPaneStructureChange(records: readonly MutationRecord[]): boole
 /** Structural elements whose appearance or removal invalidates resolution. */
 const STRUCTURE_SELECTOR = "[class*='sidebarCol'], [class*='centerCol'], [class*='rightbarCol'], [data-slot='sidebar'], [data-conversation-scroll], [data-dockkit-host]"
 
-/** Whether a string is a slot this plugin owns. */
-function isSlotId(value: string | null): value is SlotId {
-  return value !== null && /^(left|center|right|right-\d+)$/u.test(value)
+/**
+ * A raw attribute value as a slot this plugin owns.
+ * @param value - the `data-pane-scaling-slot` value.
+ * @returns the slot id, or null when the value is foreign or absent.
+ */
+export function asSlotId(value: string | null): SlotId | null {
+  return value !== null && /^(left|center|right|right-\d+|preview)$/u.test(value) ? value as SlotId : null
 }
 
 /**
@@ -350,7 +479,8 @@ export function slotOfNode(node: Element | null): SlotId | null {
   const marked = node.closest(`[${SLOT_ATTRIBUTE}]`)
   if (marked !== null) {
     const value = marked.getAttribute(SLOT_ATTRIBUTE)
-    if (isSlotId(value)) return value
+    const slot = asSlotId(value)
+    if (slot !== null) return slot
   }
   const pane = paneOfNode(node)
   return pane
@@ -387,9 +517,9 @@ export function slotForTarget(node: Element | null, lastPointerSlot: SlotId | nu
  * @param node - an event target or the active element.
  * @returns the enclosing pane, or null outside all three columns.
  */
-export function paneOfColumn(node: Element | null): PaneId | null {
+export function paneOfColumn(node: Element | null): ColumnPane | null {
   if (node === null) return null
-  for (const pane of PANE_IDS) {
+  for (const pane of COLUMN_PANES) {
     if (node.closest(COLUMN_SELECTORS[pane]) !== null) return pane
   }
   return null
@@ -405,12 +535,13 @@ export function paneOfNode(node: Element | null): PaneId | null {
   const marked = node.closest(`[${TARGET_ATTRIBUTE}]`)
   if (marked === null) return null
   const value = marked.getAttribute(TARGET_ATTRIBUTE)
-  return value === 'left' || value === 'center' || value === 'right' ? value : null
+  return value !== null && (PANE_IDS as readonly string[]).includes(value) ? value as PaneId : null
 }
 
 /**
  * Whether a node sits in a surface that owns Ctrl+wheel itself (document
- * preview, terminal) or in a floating panel.
+ * preview, terminal, floating panel) or in the pane's own toolbar, which the
+ * plugin leaves to the browser's global page zoom.
  * @param node - an event target or the active element.
  * @returns whether the plugin must leave the gesture alone.
  */

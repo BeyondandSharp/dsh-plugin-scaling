@@ -13,6 +13,13 @@
 
 右栏拆成两列后，两列各算一栏、各自独立缩放。每次变化右下角会显示一下「栏名 + 百分比」。
 
+悬停会话里「已修改文件」的行会弹出 diff 预览，它同样是独立的缩放对象：指针停在预览上时
+`Ctrl+滚轮` **只缩放卡片里的 diff 内容**——卡片本身的边框、内边距与位置保持宿主的样式不动，
+三栏取值也不受影响（在此之前事件会落到浏览器，触发整页缩放）。
+
+预览是**临时**的：鼠标移开、卡片关闭后它的缩放值会清零，下次悬停打开的是 100% 的新卡片。
+键盘路径按「焦点所在栏」解析，而预览卡片不可聚焦，所以复位预览请用 `Ctrl+滚轮` 往回滚。
+
 <img width="2022" alt="20260929040325_rec_" src="https://github.com/user-attachments/assets/d915849f-2cad-4f00-bdc0-835780c0ca0d" />
 <img width="2022" alt="20260929040203_rec_" src="https://github.com/user-attachments/assets/4efbcfff-05f3-44eb-b999-35ac1bd3f1bf" />
 
@@ -42,9 +49,24 @@ localStorage['dsh.plugin-scaling.v1'] = {"left":1,"center":1,"right":1,"right-1"
 
 `right` 是第一列、`right-1` 是右栏第二列。存储不可用（隐私模式等）时退化为纯内存；损坏或越界的项按项忽略并夹紧到 75%–150%。
 
+缩放机制由引擎探针决定：**Gecko（Firefox）用 `transform`，其它引擎用 `zoom`**——Gecko 的 `zoom`
+不作用于 `border-image` 的九宫格几何，会让皮肤用对称素材画的装饰（「新会话」缎带、输入框外框）
+右端帽被拉伸或整框断开。该臂按栏打标、只在缩放 ≠ 100% 时生效；含工具栏的栏（中栏）把 transform
+打在**工具栏下方的内容**上，所以会话头始终不受影响。
+
+需要钉死机制时可以写存储项（改完刷新）：
+
+```js
+localStorage['dsh.plugin-scaling.mechanism'] = 'zoom' // 或 'transform' / 'auto'
+```
+
+取舍与原因见 [docs/DESIGN.md](./docs/DESIGN.md)。
+
 ## 说明
 
 - 官方默认外观与大多数皮肤（`maid-atelier`、`orca-link` …）下行为一致，只使用宿主设计 token；与「设置 → 通用 → 内容字号」是相乘关系。
+- 中栏顶部那一行（会话标题、视图页签、打开右栏的按钮）**不跟着中栏缩放**，始终按 100% 渲染；缩放只作用于它下面的内容。指针停在这一行上时 `Ctrl+滚轮` 交给浏览器做**整页缩放**，栏内其它位置仍是该栏缩放。
+- **Gecko（Firefox）下 `border-image` 类皮肤装饰的右端帽会被默认的 `zoom` 拉伸**；上面的 `transform` 开关可修好这一条（该臂仍在验证中，见 DESIGN 里的取舍说明）。
 - **Web 壳的 `Ctrl+±`/`0` 键位固定**（宿主快捷键服务把 `Ctrl+=` 判为浏览器保留组合而拒绝注册）；Electron 桌面壳上会注册成三条可改键命令，出现在「设置 → 快捷键」。
 - 更细的取舍与实现说明（自校准、皮肤栏级装饰、宽度补偿等）见 [docs/DESIGN.md](./docs/DESIGN.md)。
 

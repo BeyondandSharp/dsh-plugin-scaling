@@ -6,8 +6,9 @@ import {
   ACTIVE_ATTRIBUTE, counterVariable, installPaneScaling, originXVariable, originYVariable, zoomVariable,
 } from '../src/client/scaling.ts'
 import type { InstallOptions } from '../src/client/scaling.ts'
+import { MECHANISM_ATTRIBUTE } from '../src/client/mechanism.ts'
 import { STORE_KEY, decodeZoom } from '../src/client/storage.ts'
-import { TARGET_ATTRIBUTE } from '../src/client/targets.ts'
+import { TARGET_ATTRIBUTE, TRANSFORM_ATTRIBUTE } from '../src/client/targets.ts'
 import type { HostShortcutCommand, HostShortcutService } from '../src/client/host.ts'
 import { buildShell, element } from './helpers/dom.ts'
 
@@ -51,6 +52,11 @@ function wheel(target: Element, deltaY = -100): boolean {
 /** Press Ctrl+<code> on the window. */
 function press(code: string): void {
   window.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ctrlKey: true, code }))
+}
+
+/** Let jsdom deliver its MutationObserver microtasks before the queue is flushed. */
+function tick(): Promise<void> {
+  return new Promise(resolve => { setTimeout(resolve, 0) })
 }
 
 /** Read one inline variable. */
@@ -146,9 +152,24 @@ describe('activation', () => {
     harness = activate({ supportsZoom: false })
     expect(harness.warn).toHaveBeenCalledTimes(1)
     expect(document.body.hasAttribute(ACTIVE_ATTRIBUTE)).toBe(false)
+    expect(document.body.getAttribute(MECHANISM_ATTRIBUTE)).toBeNull()
     expect(marks()).toEqual([])
     expect(style(zoomVariable('left'))).toBe('')
     expect(wheel(element(document, '.cv_root'))).toBe(false)
+  })
+
+  it('publishes the scaling mechanism the stylesheet gates its arms on', () => {
+    harness = activate()
+    expect(document.body.getAttribute(MECHANISM_ATTRIBUTE)).toBe('zoom')
+    harness.dispose()
+    harness = undefined
+    expect(document.body.getAttribute(MECHANISM_ATTRIBUTE)).toBeNull()
+  })
+
+  it('switches to the transform mechanism when zoom cannot be trusted', () => {
+    harness = activate({ mechanism: 'transform' })
+    expect(document.body.getAttribute(MECHANISM_ATTRIBUTE)).toBe('transform')
+    expect(style(zoomVariable('left'))).toBe('1')
   })
 })
 
@@ -219,6 +240,48 @@ describe('wheel scaling end to end', () => {
     expect(wheel(element(document, '[data-dockkit-float]'))).toBe(false)
     expect(style(zoomVariable('right'))).toBe('1')
     expect(marks()).toHaveLength(2)
+  })
+
+  it('zooms the changed-files diff preview on its own, not the page', async () => {
+    harness = activate({}, () => { buildShell(document, { withPreview: true }) })
+    const card = element(document, '.hc_card')
+    expect(card.getAttribute('data-pane-scaling-slot')).toBe('preview')
+    expect(card.getAttribute(TARGET_ATTRIBUTE)).toBe('preview')
+    expect(wheel(element(document, '.hc_line'))).toBe(true)
+    expect(style(zoomVariable('preview'))).toBe('1.05')
+    // The pane underneath keeps its own value: the preview is its own slot.
+    expect(style(zoomVariable('center'))).toBe('1')
+    expect(style(zoomVariable('left'))).toBe('1')
+    // The host unmounts the card when the pointer leaves; the mark goes with it.
+    card.remove()
+    await tick()
+    harness.flush()
+    expect(card.hasAttribute(TARGET_ATTRIBUTE)).toBe(false)
+    expect(style(zoomVariable('preview'))).toBe('1')
+  })
+
+  it('keeps the preview on the zoom arm, and clears its value when it closes', async () => {
+    harness = activate({ mechanism: 'transform' }, () => { buildShell(document, { withPreview: true }) })
+    const card = element(document, '.hc_card')
+    wheel(element(document, '.hc_line'))
+    expect(style(zoomVariable('preview'))).toBe('1.05')
+    // The diff scales inside the host's card, so the card has to grow with it:
+    // `zoom` reserves that room, a transform would let the diff spill out.
+    expect(card.hasAttribute(TRANSFORM_ATTRIBUTE)).toBe(false)
+    expect(style(zoomVariable('center'))).toBe('1')
+    // A card is transient: the next one opens at 100%, never at the last one's size.
+    card.remove()
+    await tick()
+    harness.flush()
+    expect(style(zoomVariable('preview'))).toBe('1')
+    expect(decodeZoom(localStorage.getItem(STORE_KEY)).preview).toBe(20)
+  })
+
+  it('leaves the pane toolbar to the browser page zoom', () => {
+    harness = activate()
+    expect(wheel(element(document, "[data-slot='conversation.header'] button"))).toBe(false)
+    expect(style(zoomVariable('center'))).toBe('1')
+    expect(localStorage.getItem(STORE_KEY)).toBeNull()
   })
 })
 
@@ -395,6 +458,67 @@ describe('calibration wiring', () => {
   })
 })
 
+describe('transform arm stamping', () => {
+  it('stamps only the panes that are really scaled', () => {
+    harness = activate({ mechanism: 'transform' })
+    const left = element(document, '.sb_root')
+    const center = element(document, '.cv_root')
+    const right = element(document, '.dk_pane')
+    // Everything sits at 100%: an identity transform would only add a
+    // containing block and a stacking context, so nothing is stamped.
+    expect(document.querySelectorAll(`[${TRANSFORM_ATTRIBUTE}]`)).toHaveLength(0)
+    wheel(left)
+    expect(left.hasAttribute(TRANSFORM_ATTRIBUTE)).toBe(true)
+    expect(center.hasAttribute(TRANSFORM_ATTRIBUTE)).toBe(false)
+    expect(right.hasAttribute(TRANSFORM_ATTRIBUTE)).toBe(false)
+    // Back to 100% releases the stamp again.
+    wheel(left, 100)
+    expect(left.hasAttribute(TRANSFORM_ATTRIBUTE)).toBe(false)
+    expect(document.querySelectorAll(`[${TRANSFORM_ATTRIBUTE}]`)).toHaveLength(0)
+  })
+
+  it('scales the content below the toolbar instead of the conversation root', () => {
+    harness = activate({ mechanism: 'transform' })
+    const root = element(document, '.cv_root')
+    const content = element(document, '[data-conversation-scroll]')
+    wheel(root)
+    expect(style(zoomVariable('center'))).toBe('1.05')
+    // The transform goes on the content, never on the element that holds the
+    // header: a transform there re-anchors the header's fixed chrome and hid
+    // its corner controls in a real Gecko session.
+    expect(root.hasAttribute(TRANSFORM_ATTRIBUTE)).toBe(false)
+    expect(content.hasAttribute(TRANSFORM_ATTRIBUTE)).toBe(true)
+    // The toolbar keeps its own height, so the content box must give it back.
+    expect(style('--pane-scaling-toolbar-center')).toBe('0px')
+  })
+
+  it('scales each split right column on its own stamp', () => {
+    harness = activate({ mechanism: 'transform' }, () => { buildShell(document, { splitRight: true }) })
+    const first = element(document, "[data-dockkit-column='0'] > section")
+    const second = element(document, "[data-dockkit-column='1'] > section")
+    wheel(second)
+    expect(second.hasAttribute(TRANSFORM_ATTRIBUTE)).toBe(true)
+    expect(first.hasAttribute(TRANSFORM_ATTRIBUTE)).toBe(false)
+    wheel(second, 100)
+    expect(second.hasAttribute(TRANSFORM_ATTRIBUTE)).toBe(false)
+  })
+
+  it('never stamps the arm under the zoom mechanism', () => {
+    harness = activate()
+    wheel(element(document, '.sb_root'))
+    expect(document.querySelectorAll(`[${TRANSFORM_ATTRIBUTE}]`)).toHaveLength(0)
+  })
+
+  it('clears the stamp on teardown', () => {
+    harness = activate({ mechanism: 'transform' })
+    wheel(element(document, '.sb_root'))
+    expect(document.querySelectorAll(`[${TRANSFORM_ATTRIBUTE}]`)).toHaveLength(1)
+    harness.dispose()
+    harness = undefined
+    expect(document.querySelectorAll(`[${TRANSFORM_ATTRIBUTE}]`)).toHaveLength(0)
+  })
+})
+
 describe('structure changes', () => {
   it('re-resolves marks after the right column disappears and comes back', async () => {
     harness = activate()
@@ -432,6 +556,7 @@ describe('teardown', () => {
     expect(document.body.hasAttribute(ACTIVE_ATTRIBUTE)).toBe(false)
     expect(document.body.getAttribute(FILL_ATTRIBUTE)).toBeNull()
     expect(document.body.getAttribute(FIXED_ATTRIBUTE)).toBeNull()
+    expect(document.body.getAttribute(MECHANISM_ATTRIBUTE)).toBeNull()
     expect(marks()).toEqual([])
     expect(style(zoomVariable('center'))).toBe('')
     expect(style(counterVariable('center'))).toBe('')
