@@ -100,8 +100,8 @@ pnpm release 0.2.0            # 也可以用 patch | minor | major | prerelease
 7. **`npm publish --dry-run`**：不写 registry，只打印将要发布的内容。
 8. **二次确认**：终端里确认后才真正 `npm publish`；npm 给出二次验证链接时，在浏览器完成授权，
    脚本会等它结束（没有网页验证时可用 `--otp <code>`）。
-9. **校验**：轮询 `npm view <包>@<版本>`，确认 tag 指向正确后结束；命令没报错但 registry 查不到会
-   以非零退出并给出排查提示。
+9. **以退出码为准结束**：`npm publish` 不报错即视为发布成功（不做发布后的 registry 轮询）；
+   报错时给出单条重试与整条回滚的命令。
 
 其它开关：`--dry-run`（全流程演练，什么都不写）、`--no-publish`（只提交/打标签/推送）、
 `--tag <name>`（dist-tag，默认正式版 `latest`、预发布 `next`）、`--yes`（自动化场景跳过确认）。

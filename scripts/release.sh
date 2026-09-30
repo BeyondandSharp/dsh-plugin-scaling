@@ -309,7 +309,7 @@ if PUBLISHED_LATEST=$("$NPM" view "$NAME" version 2>/dev/null); then
     die "npm 上已存在 $NAME@$VERSION"
   fi
 else
-  warn '查询 npm 失败（未登录或离线），只做了本地版本比对'
+  log '（查不到 npm 上的最新版，只做了本地版本比对）'
 fi
 
 if [[ -z $DIST_TAG ]]; then
@@ -424,33 +424,16 @@ if ! "$NPM" "${publish_args[@]}"; then
   warn "  （整条回滚：git tag -d $VERSION && git push $REMOTE :refs/tags/$VERSION && git reset --hard HEAD~1 && git push $REMOTE HEAD --force-with-lease）"
   exit 1
 fi
-ok 'npm publish 命令没有报错'
-
-step "校验 registry"
-verified=''
-for attempt in 1 2 3 4 5 6; do
-  verified=$("$NPM" view "$NAME@$VERSION" version 2>/dev/null | tr -d '[:space:]' || true)
-  [[ $verified == "$VERSION" ]] && break
-  if ((attempt < 6)); then
-    log "第 $attempt 次查询还没同步（registry 有延迟），2s 后重试"
-    sleep 2
-  fi
-done
-if [[ $verified != "$VERSION" ]]; then
-  die "发布命令没有报错，但 registry 上还查不到 $NAME@$VERSION：到 https://www.npmjs.com/package/$NAME 确认（可能仍在同步，或二次验证链接未完成）"
-fi
-ok "registry 已确认 $NAME@$VERSION"
-
-tag_points=$("$NPM" view "$NAME" dist-tags --json 2>/dev/null | tr -d '[:space:]' || true)
-case $tag_points in
-  *"\"$DIST_TAG\":\"$VERSION\""*) ok "dist-tag $DIST_TAG → $VERSION" ;;
-  *) warn "dist-tag 还没指向 $VERSION（当前：${tag_points:-查询失败}）" ;;
-esac
+# A zero exit status is the whole verdict: no registry polling afterwards, on
+# purpose. npm already reports the failure (validation link not completed, token
+# expired, version taken) with a non-zero exit, and a freshly published version
+# can take a moment to show up in reads.
+ok 'npm publish 没有报错'
 
 step "完成"
 log "$NAME@$VERSION · dist-tag=$DIST_TAG"
 log "https://www.npmjs.com/package/$NAME/v/$VERSION"
-if [[ -n $REMOTE ]]; then
+if ((DO_PUSH == 1)) && [[ -n $REMOTE ]]; then
   log "提交 chore(pkg): bump version to $VERSION · 标签 $VERSION → $REMOTE"
 else
   log "提交 chore(pkg): bump version to $VERSION · 标签 $VERSION（未推送）"
