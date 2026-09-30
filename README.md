@@ -20,9 +20,8 @@
 预览是**临时**的：鼠标移开、卡片关闭后它的缩放值会清零，下次悬停打开的是 100% 的新卡片。
 键盘路径按「焦点所在栏」解析，而预览卡片不可聚焦，所以复位预览请用 `Ctrl+滚轮` 往回滚。
 
-<img width="2022" alt="20260929040325_rec_" src="https://github.com/user-attachments/assets/d915849f-2cad-4f00-bdc0-835780c0ca0d" />
-<img width="2022" alt="20260929040203_rec_" src="https://github.com/user-attachments/assets/4efbcfff-05f3-44eb-b999-35ac1bd3f1bf" />
-
+![alt text](docs/20261001032442_rec_.gif)
+![alt text](docs/20261001032152_rec_.gif)
 
 ## 安装
 
