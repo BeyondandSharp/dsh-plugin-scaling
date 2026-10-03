@@ -19,7 +19,7 @@
 //   release            create the Forgejo release
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { binaryOnPath, MIN_VERSION_TEXT, npmVersion, unsupportedReason } from './publisher.mjs';
@@ -29,10 +29,15 @@ import {
   detectPackageManager,
   installCommand,
   installTools,
+  MANAGER_PROXY_VARS,
   missingTools,
   packagesFor,
   proxyEnv,
+  repositoriesFor,
   REQUIRED_TOOLS,
+  resolveEndpoint,
+  writeAptSources,
+  writeYumRepos,
 } from './deps.mjs';
 import { isDirect } from './is-direct.mjs';
 
@@ -257,6 +262,12 @@ async function ensureNpm(env) {
  */
 async function ensureTools(env) {
   const { spawnSync } = await import('node:child_process');
+
+  // A `*_PROXY` value may be a real forward proxy or an internal mirror: classify
+  // it once and remember the answer for the later steps (install-deps needs the
+  // npm side of it, and a mirror must never be handed to npm as a proxy).
+  await resolveNpmEndpoint(env);
+
   // npm is what logs in and publishes; the lockfile's own manager is what
   // installs dependencies, so both are checked on every path.
   const finish = async () => {
@@ -279,24 +290,80 @@ async function ensureTools(env) {
   }
 
   const packages = packagesFor(manager, missing);
-  const proxy = proxyEnv(manager, env);
-  const proxyNote = Object.keys(proxy).length > 0 ? `（代理：${Object.keys(proxy).join(', ')}）` : '（未配置代理）';
-  process.stdout.write(`使用 ${manager} 安装：${packages.join(', ')} ${proxyNote}\n`);
+  const plan = await resolveEndpoint(manager, env);
+  if (plan.source === 'proxy-as-mirror') {
+    process.stdout.write(`${managerEndpointVar(manager)} 指向的是镜像（探测到仓库索引），按仓库使用\n`);
+  }
+  const repositories = plan.mirror;
+  const proxy = proxyEnv(manager, env, { explicit: plan.proxy });
+  const aptSourcesFile = manager === 'apt-get' ? writeAptSources(repositories, env) : '';
+  const yumReposDir = isYumFamily(manager)
+    ? writeYumRepos(repositories, env, { warn: (message) => process.stderr.write(`${message}\n`) })
+    : '';
+  const resolved = { repositories, aptSourcesFile, yumReposDir };
+  const proxyNote =
+    Object.keys(proxy).length > 0
+      ? `（代理：${plan.proxy || Object.keys(proxy).join(', ')}）`
+      : '（未配置代理）';
+  const repoNote = repositories.length > 0 ? `（附加仓库：${repositories.join(', ')}）` : '';
+  process.stdout.write(`使用 ${manager} 安装：${packages.join(', ')} ${proxyNote}${repoNote}\n`);
 
   if (!canInstall(env)) {
-    process.stderr.write(`不是 root 且没有 sudo，跳过安装；请手动执行：${installHint(manager, packages)}\n`);
+    process.stderr.write(
+      `不是 root 且没有 sudo，跳过安装；请手动执行：${installHint(manager, packages, env, resolved)}\n`,
+    );
     return finish();
   }
 
-  const result = installTools({ manager, tools: missing, env });
+  const result = installTools({ manager, tools: missing, env, proxy, ...resolved });
   const still = missingTools(REQUIRED_TOOLS, spawnSync);
   if (still.length === 0) {
     process.stdout.write(`已安装 ${result.installed.join(', ')}，工具齐全\n`);
   } else {
     process.stderr.write(`仍缺少：${still.join(', ')}\n`);
-    process.stderr.write(`请手动执行：${installHint(manager, packages)}\n`);
+    process.stderr.write(`请手动执行：${installHint(manager, packages, env, resolved)}\n`);
   }
   return finish();
+}
+
+/** The `*_PROXY` variable that names this manager's endpoint, for log lines. */
+export function managerEndpointVar(manager) {
+  return (MANAGER_PROXY_VARS[manager] || [])[0] || `${String(manager).toUpperCase()}_PROXY`;
+}
+
+function isYumFamily(manager) {
+  return manager === 'yum' || manager === 'dnf' || manager === 'microdnf';
+}
+
+/** Make a resolved value visible to the following workflow steps. */
+function exportEnv(key, value) {
+  process.env[key] = value;
+  const file = process.env.GITHUB_ENV;
+  if (!file) return;
+  try {
+    appendFileSync(file, `${key}=${value}\n`);
+  } catch {
+    /* the value still applies to this process */
+  }
+}
+
+/**
+ * Decide what `NPM_PROXY` means and pass the verdict on.
+ *
+ * A registry mirror is used for **dependency installation only**
+ * (`NPM_INSTALL_REGISTRY`), because login/publish must keep talking to the real
+ * npmjs — the Action publishes there, and an internal registry cannot complete
+ * npm's web login anyway. A real proxy becomes npm's own proxy setting.
+ */
+async function resolveNpmEndpoint(env) {
+  const plan = await resolveEndpoint('npm', env);
+  if (plan.source === 'proxy-as-mirror') {
+    exportEnv('NPM_INSTALL_REGISTRY', plan.mirror[0]);
+    process.stdout.write(`NPM_PROXY 指向的是 registry：依赖安装将使用 ${plan.mirror[0]}（登录/发布仍走 npmjs）\n`);
+  } else if (plan.source === 'proxy') {
+    exportEnv('NPM_CONFIG_PROXY', plan.proxy);
+    process.stdout.write(`NPM_PROXY 指向的是代理：npm 将使用 ${plan.proxy}\n`);
+  }
 }
 
 /**
@@ -356,8 +423,12 @@ export function corepackPin(dir, manager = packageManagerFor(dir)) {
 }
 
 /** The command a human would run, for log messages. */
-export function installHint(manager, packages) {
-  const built = installCommand(manager, packages);
+export function installHint(manager, packages, env = process.env, resolved = {}) {
+  const repositories = resolved.repositories ?? repositoriesFor(manager, env);
+  const aptSourcesFile =
+    resolved.aptSourcesFile ?? (manager === 'apt-get' ? writeAptSources(repositories, env) : '');
+  const yumReposDir = resolved.yumReposDir ?? (isYumFamily(manager) ? writeYumRepos(repositories, env) : '');
+  const built = installCommand(manager, packages, { repositories, aptSourcesFile, yumReposDir });
   if (!built) return `用 ${manager} 安装 ${packages.join(' ')}`;
   return [...commandPrefix(), built[0], ...built[1]].join(' ');
 }
@@ -386,10 +457,19 @@ async function installDeps(env) {
   // points at a member, so the install runs where the lockfile is: that is what
   // makes pnpm/yarn workspaces work instead of npm-installing the member alone.
   const installDir = lockfileDir(dir, root) || dir;
-  if (manager === 'pnpm') return runCommand('pnpm', ['install', '--frozen-lockfile'], { cwd: installDir, env });
-  if (manager === 'yarn') return runCommand('yarn', yarnInstallArgs(env, spawnSync, installDir), { cwd: installDir, env });
-  if (existsSync(join(installDir, 'package-lock.json'))) return runCommand('npm', ['ci'], { cwd: installDir, env });
-  return runCommand('npm', ['install'], { cwd: installDir, env });
+  // `NPM_PROXY` pointing at a registry is resolved by ensure-tools into this
+  // variable (and only here): the release itself must keep using npmjs.
+  const registry = String(env.NPM_INSTALL_REGISTRY || '').trim();
+  const registryEnv = registry
+    ? { npm_config_registry: registry, YARN_NPM_REGISTRY_SERVER: registry }
+    : {};
+  const withRegistry = { ...env, ...registryEnv };
+  if (manager === 'pnpm') return runCommand('pnpm', ['install', '--frozen-lockfile'], { cwd: installDir, env: withRegistry });
+  if (manager === 'yarn') return runCommand('yarn', yarnInstallArgs(env, spawnSync, installDir), { cwd: installDir, env: withRegistry });
+  if (existsSync(join(installDir, 'package-lock.json'))) {
+    return runCommand('npm', registry ? ['ci', '--registry', registry] : ['ci'], { cwd: installDir, env: withRegistry });
+  }
+  return runCommand('npm', registry ? ['install', '--registry', registry] : ['install'], { cwd: installDir, env: withRegistry });
 }
 
 async function runPackageScript(name, env) {

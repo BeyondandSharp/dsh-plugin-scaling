@@ -65,7 +65,7 @@ workflow 里除定位步骤外每一步都是一行（`配置里没有内嵌脚�
 可用子命令：`locate-action`、`ensure-tools`、`verify-action`、`install-deps`、`resolve`、`preflight`、
 `test`、`build`、`prepare`、`publish`、`release`；都能在本地直接跑，例如
 `GITHUB_WORKSPACE=$PWD node scripts/run.mjs locate-action`、
-`APK_PROXY=http://proxy:8080 node scripts/run.mjs ensure-tools`。
+`APT_PROXY=https://apt.internal node scripts/run.mjs ensure-tools`。
 
 复制不全会被 `verify-action` 拦下并逐个列出缺哪个文件。
 
@@ -118,21 +118,62 @@ workflow 里除定位步骤外每一步都是一行（`配置里没有内嵌脚�
 
 corepack 缺失（较新的 Node 镜像已不再内置）或启用失败时，`Ensure container tools` **直接失败并给出处理办法**，不会等到 `install-deps` 抛 `ENOENT`。设 `SKIP_TOOL_INSTALL=true` 可完全关闭这些自动准备（离线镜像自行预装时用）。corepack 取版本、pnpm/yarn 下载依赖都要出网，分别走 `HTTPS_PROXY` 与 `NPM_CONFIG_PROXY`。
 
-### 代理（无直连出网时）
+### 代理、镜像与 registry（内网怎么接）
 
-runner 没有直连外网时，把下列仓库变量填上；前 7 个用于**包管理器**安装与 `git`，最后一个直接透传给 npm：
+runner 没有直连外网时，先分清三件不同的事：**代理**（forward proxy）、**镜像/仓库**（repository）、**registry**（npm / Go module proxy）。填错变量的典型症状是 `unable to select packages`、`HTTP 404/308`、`Connection refused`。
+
+**最省事的用法：只填下面这几个地址。**
+`APT_PROXY` / `NPM_PROXY` 的值可以是**真代理**，也可以是**内网镜像/registry**：`Ensure container tools` 会**探测一次**（直接取该地址自己的仓库索引 / `/-/ping`），再决定怎么用。apk / yum 没有 `*_PROXY`，镜像直接填 `APK_REPO` / `YUM_REPO`（不探测）。
+
+| 变量 | 你填什么 | 判为**镜像 / registry** | 判为**代理** |
+| --- | --- | --- | --- |
+| `APT_PROXY` | Debian/Ubuntu 镜像根，如 `https://apt.internal` | 生成临时 sources（`<根>/debian` 或 `/ubuntu` + 镜像里的 codename）→ `apt-get -o Dir::Etc::sourcelist=…` | 作为 apt 的 `http_proxy`/`https_proxy` |
+| `NPM_PROXY` | 内网 npm registry，如 `https://npm.internal` | **只用于装依赖**：`install-deps` 变成 `npm install --registry <url>`（`login`/`publish` 仍走 npmjs） | 作为 npm 的 `proxy` |
+| `GOPROXY`（或 `GO_PROXY`） | Go module proxy（Athens 等） | 直接作为 `GOPROXY`，给项目自己的 build/test 脚本用 | — |
+
+判别规则：直接 GET 索引文件，**2xx = 镜像**；拿到明确的 HTTP 错误（404/400/308…）= 代理；**完全没有响应**（连不上/超时）= 仍按镜像处理 —— 那正是你填的地址，报错信息也更贴切。
+
+apk / yum 的镜像用这两个（显式指定，**不探测**；设了就优先于任何 `*_PROXY`）：
+
+| 变量 | 指向什么 |
+| --- | --- |
+| `APK_REPO` | Alpine 镜像**根地址或完整仓库 URL**（逗号分隔）：根地址会按镜像里的 `VERSION_ID` 展开成 `<根>/alpine/vX.Y/{main,community}` |
+| `YUM_REPO` | yum/dnf 镜像**根地址或完整 baseurl**（逗号分隔；根地址按 `VERSION_ID` 展开成 `<根>/centos/<N>-stream/{BaseOS,AppStream}/x86_64/os`）；生成 `.repo` 目录 + `--setopt=reposdir=`，镜像自带的 `/etc/pki/rpm-gpg/RPM-GPG-KEY*` 会写进 `gpgkey`（`gpgcheck=1`），一个密钥都没有时才降级为 `gpgcheck=0` 并在日志里说明。旧的 `APK_REPOSITORY` / `YUM_REPOSITORY` 仍可识别 |
+
+registry 的两个显式覆盖：
+
+| 变量 | 指向什么 |
+| --- | --- |
+| `NPM_INSTALL_REGISTRY` | **只给 `install-deps` 用**的 registry（`NPM_PROXY` 自动判别出的结果也写进这个） |
+| `NPM_CONFIG_REGISTRY` | npm 的 `registry` 配置，`login` / `publish` / `view` 全部生效。**注意**：本 Action 的认证走 npm 的网页登录（`POST /-/v1/login`），Verdaccio 这类内网 registry 会返回 404，登录会退化成“Username:”提示并立即失败——所以发布目标别设它 |
+
+**真正的 HTTP 转发代理**也可以用这些通用变量（它们只当代理，不做判别）：
 
 | 变量 | 作用 |
 | --- | --- |
 | `ALL_PROXY` | 通用兜底（`socks5://…` 也可以） |
 | `HTTP_PROXY` / `HTTPS_PROXY` | 标准 HTTP 代理 |
 | `NO_PROXY` | 不走代理的地址（如 `localhost,.internal`） |
-| `APT_PROXY` | apt 专用，**优先于**上面的通用变量（apt 不支持 socks5，就需要它单独指 HTTP 代理） |
-| `APK_PROXY` | apk 专用，同上 |
-| `YUM_PROXY` | yum/dnf 专用，同上 |
-| `NPM_CONFIG_PROXY` | npm 自己的变量名（npm 会读成 `proxy`），只影响 npm 的 registry 访问 |
+| `NPM_CONFIG_PROXY` | npm 自己的变量名（npm 会读成 `proxy`） |
 
-取值优先级（以 apt 为例）：`APT_PROXY` → `HTTP_PROXY`/`HTTPS_PROXY` → `ALL_PROXY`。变量会同时以大写和小写形式导出（`http_proxy`/`HTTP_PROXY`），因为不同工具认不同写法；`NO_PROXY` 也一样。
+取值优先级（以 apt 为例）：`APT_PROXY`（判为代理时）→ `HTTP_PROXY`/`HTTPS_PROXY` → `ALL_PROXY`。变量会同时以大写和小写形式导出（`http_proxy`/`HTTP_PROXY`），因为不同工具认不同写法；`NO_PROXY` 也一样。
+
+想自己确认某个地址是哪一类：
+
+```bash
+# 是镜像/仓库？自己的路径就有包索引
+curl -sI https://HOST/alpine/v3.24/main/x86_64/APKINDEX.tar.gz | head -1   # Alpine（分支带 v）
+curl -sI https://HOST/debian/dists/bookworm/InRelease | head -1            # Debian/Ubuntu
+curl -sI https://HOST/centos/9-stream/BaseOS/x86_64/os/repodata/repomd.xml # CentOS Stream
+
+# 是 npm registry？  <- /-/ping 返回 {}
+curl -s https://HOST/-/ping
+
+# 是代理？能替别人取东西
+curl -x http://HOST:PORT -o /dev/null -w '%{http_code}\n' https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/APKINDEX.tar.gz
+```
+
+socks5 代理只能给 `ALL_PROXY`/`HTTP(S)_PROXY` 用，apt/apk 不能；内网源形式特殊（多组件、多 suite、非 CentOS 的 RPM 发行版）时，直接写进镜像的 `sources.list` / `.repo` / `.npmrc` 更省事。
 
 ### runner 标签与镜像（重要）
 
@@ -206,7 +247,12 @@ dist-tag 默认：正式版 `latest`，含 `-` 的预发布版 `next`；可用�
 | `PKG_MANAGER` | 空 | 强制 `apk`/`apt-get`/`yum`/`dnf`/`microdnf`，跳过自动探测 |
 | `RELEASE_DIST_TAG` | 空 | 固定 dist-tag |
 | `NPM_AUTH_WAIT_MINUTES` | `15` | **整个认证过程的总预算**（登录 + 二次验证 + 重试共用同一个 deadline），超时后推送失败通知；不是每一步各算一次 |
-| `ALL_PROXY` 等 | 空 | 见上面「代理」 |
+| `APT_PROXY` / `NPM_PROXY` | 空 | 内网端点：**自动判别**是真代理还是镜像/registry，见「代理、镜像与 registry」。例：`APT_PROXY=https://apt.internal` |
+| `ALL_PROXY` / `HTTP_PROXY` / `HTTPS_PROXY` / `NPM_CONFIG_PROXY` | 空 | 真正的 HTTP 转发代理（不参与判别） |
+| `APK_REPO` / `YUM_REPO` | 空 | 显式仓库地址（跳过判别），根地址即可：Alpine 镜像根 / yum-dnf 镜像根。旧的 `APK_REPOSITORY` / `YUM_REPOSITORY` 仍可识别 |
+| `NPM_INSTALL_REGISTRY` | 空 | 只给 `install-deps` 用的 registry（`NPM_PROXY` 判为 registry 时也写进它） |
+| `NPM_CONFIG_REGISTRY` | 空 | 内网 npm **registry**，`login`/`publish`/`view` 都走它（发布目标一般别设） |
+| `GOPROXY` / `GO_PROXY` | 空 | 内网 **Go module proxy**（Athens 等），只影响项目自己的 build/test 脚本 |
 
 ### `REQUIRED_ARTIFACTS` 怎么设
 
@@ -365,11 +411,14 @@ node -e "import('/absolute/path/to/.forgejo/scripts/notify-lib.mjs').then((lib) 
 | `未配置通知地址` | 在 `设置 → Actions → Variables` 里加 `MESSAGE_PUSHER_URL`（本 Action 不内置地址） |
 | `找不到 Action 目录` | 确认 `.forgejo/` 整目录在仓库里（含 `workflows/` 与 `scripts/notify-lib.mjs`）；报错里会列出实际找到的路径 |
 | `找不到 npm` / `npm 10.x 低于 10.9.0` | 换用官方 Node 镜像（自带 npm），或在镜像里预装较新的 npm |
+| apk/apt/yum 报 `unable to select packages`、`Could not connect`、`HTTP 404/308` | 多半是把**镜像站**当成了代理。apk/yum 镜像填 `APK_REPO` / `YUM_REPO`，apt 镜像填 `APT_PROXY`（会自动识别，见「代理、镜像与 registry」）；真要给 apk/yum 配代理就用通用的 `HTTP_PROXY`/`HTTPS_PROXY` |
 | `该仓库的锁文件要求用 pnpm/yarn 安装依赖…` | 镜像里没有该包管理器也没有 corepack。换用自带它的镜像、在镜像里预装，或删掉对应锁文件改用 npm |
 | `npm 无法完成二次验证，也没有给出可网页完成的链接` | 镜像缺 `script(1)`（装 util-linux）、npm 太旧、或该 registry 只认手输验证码（用 dispatch 的 `otp` 输入） |
 | `授权链接投递失败` | webhook 地址 / token 配错。人工没有链接就无法完成认证，所以默认让 job 失败；确认接收端可用后可临时设 `NOTIFY_REQUIRED=false` |
 | `版本必须严格大于 registry 上的 latest` | tag 版本比 npm 上的旧；删掉 tag 换新版本，或确认是否想重发 |
 | `构建产物缺失` | 检查 `REQUIRED_ARTIFACTS`（默认不检查）或该项目的产物路径；注意它是在 Build 之后校验的 |
+| `npm 退化为用户名/密码提示` | 该 registry 不支持 npm 的网页登录（Verdaccio / 多数内网 registry 都是）。把 `NPM_CONFIG_REGISTRY` 指回 npmjs；只想让装依赖走内网镜像时，用项目 `.npmrc` + `publishConfig.registry`，或改用 trusted publishing (OIDC)。检测到该提示会**立即失败**，不会空等认证预算 |
+| `查询 registry 失败，无法确认 …是否已发布` | `npm view` 非 404 失败（网络/权限）。修好 registry 或 `NPM_CONFIG_REGISTRY` 再重试；只有确认 404 才会按首次发布继续 |
 | `npm 认证状态：未登录` | 正常现象：把推送里的登录网址在浏览器打开完成登录；工作流会在预算内自动重试 |
 | 重推同一个 tag | 版本已存在时是**绿色空操作**，Test/Build/Prepare/Publish 会被跳过；如果只是缺 Release，`Create Forgejo release` 仍会补建 |
 | 收不到推送 | 正常情况之一：本 Action **只在有一次性授权链接时才推送**，普通进度/失败/成功不会打扰你。确认 `MESSAGE_PUSHER_URL`（如需 `MESSAGE_PUSHER_TOKEN`）配置正确即可 |

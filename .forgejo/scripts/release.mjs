@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { errorSummary } from './notify-lib.mjs';
+import { errorSummary, npmWebUrl } from './notify-lib.mjs';
 import { isDirect } from './is-direct.mjs';
 
 export const IS_DIRECT = isDirect(import.meta.url);
@@ -9,12 +9,13 @@ export const IS_DIRECT = isDirect(import.meta.url);
 /** How many commits the release body may list. */
 export const CHANGELOG_LIMIT = 50;
 
-export function buildReleaseBody(core, changelog) {
+export function buildReleaseBody(core, changelog, env = process.env) {
+  const npmUrl = npmWebUrl(env, core.package, core.version);
   return [
     `## ${core.package}@${core.version}`,
     '',
     `- dist-tag：\`${core.distTag}\``,
-    `- npm：https://www.npmjs.com/package/${core.package}/v/${core.version}`,
+    npmUrl ? `- npm：${npmUrl}` : '',
     core.tarball ? `- tarball：\`${core.tarball}\`` : '',
     core.tarball_sha256 ? `- sha256：\`${core.tarball_sha256}\`` : '',
     '',

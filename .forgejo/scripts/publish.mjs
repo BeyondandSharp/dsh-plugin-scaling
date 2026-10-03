@@ -154,8 +154,13 @@ async function main() {
    * Run npm, stream its output, and relay the first authorisation URL that
    * appears — npm keeps polling while it waits for the browser, so waiting for
    * the process to exit before relaying would deadlock.
+   *
+   * `abortWhen` stops the run as soon as the output proves it can never finish:
+   * a registry without the web-login endpoint (Verdaccio, most internal mirrors)
+   * makes npm fall back to a "Username:" prompt that nothing can answer, and
+   * waiting for the budget would help nobody.
    */
-  const runNpm = (args, { phase = 'npm-2fa', onAuthUrl, usePty = pty } = {}) =>
+  const runNpm = (args, { phase = 'npm-2fa', onAuthUrl, usePty = pty, abortWhen } = {}) =>
     new Promise((resolveRun) => {
       process.stdout.write(`运行：${npmCommand(args)}${usePty ? '' : '（无 PTY）'}\n`);
       const exitFile = join(temp, `.npm-exit-${process.pid}-${Math.random().toString(36).slice(2)}`);
@@ -194,6 +199,14 @@ async function main() {
         process.stdout.write(chunk);
         captured = `${captured}${cleanOutput(chunk)}`.slice(-262_144);
         if (failure) return;
+        if (abortWhen) {
+          const reason = abortWhen(captured);
+          if (reason) {
+            failure = new Error(reason);
+            stop();
+            return;
+          }
+        }
         void relay(findCompleteAuthUrl(captured));
       };
       child.stdout.setEncoding('utf8');
@@ -240,16 +253,28 @@ async function main() {
     const login = await runNpm(loginArgs(), {
       phase: 'npm-login-required',
       onAuthUrl: (url, loginPhase) => announce(url, loginPhase),
+      // A registry without POST /-/v1/login (Verdaccio, most internal mirrors)
+      // makes npm fall back to an unanswerable "Username:" prompt: stop at once
+      // instead of waiting out the budget for a login that can never happen.
+      abortWhen: (text) =>
+        fellBackToPasswordPrompt(text)
+          ? 'npm 退化为用户名/密码提示（该 registry 不支持网页登录）'
+          : '',
     });
-    if (login.failure) throw login.failure;
 
+    // The prompt check comes first: when the run was aborted for exactly this
+    // reason, `failure` is that abort and the operator needs the advice below.
     if (fellBackToPasswordPrompt(login.captured)) {
       process.stderr.write(
-        'npm 退化为用户名/密码提示（会话失效或该 registry 不支持网页登录），无法自动获取网址。\n' +
-          '请检查 registry 是否支持 --auth-type=web，或改用 trusted publishing (OIDC)。\n',
+        'npm 退化为用户名/密码提示：该 registry 不支持 npm 的网页登录（POST /-/v1/login），\n' +
+          '而本 Action 不保存任何 registry token，无法用用户名/密码完成认证。\n' +
+          '请把 NPM_CONFIG_REGISTRY 指向支持网页登录的 registry（npmjs），\n' +
+          '或只让"安装依赖"走内网镜像（项目的 .npmrc + package.json 的 publishConfig.registry），\n' +
+          '或改用 trusted publishing (OIDC)。\n',
       );
       process.exit(1);
     }
+    if (login.failure) throw login.failure;
 
     const prose = parseNpmAuthOutput(login.captured);
     const loginUrl = findAuthUrl(login.captured) || (isAuthUrl(prose.url) ? prose.url : '');

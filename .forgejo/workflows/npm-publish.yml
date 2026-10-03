@@ -38,8 +38,15 @@
 # (default `node:22-bookworm`, whose bundled npm is new enough) retarget the
 # runner label and the job image.
 # Missing container tools (script/git) are installed with the image's package
-# manager through ALL_PROXY / APT_PROXY / APK_PROXY / YUM_PROXY;
-# SKIP_TOOL_INSTALL=true disables that.
+# manager. APT_PROXY and NPM_PROXY are auto-classified: the value may be a real
+# forward proxy or an internal mirror/registry — ensure-tools probes whether the
+# address serves its own index and uses it as a repository/registry when it does,
+# and as a proxy when it does not. apk and yum mirrors go in APK_REPO / YUM_REPO
+# (explicit, no probe); a genuine proxy for them is the generic HTTP(S)_PROXY.
+# NPM_INSTALL_REGISTRY (install only) and NPM_CONFIG_REGISTRY (also
+# login/publish) remain as explicit overrides.
+# SKIP_TOOL_INSTALL=true disables tool installation entirely.
+# GOPROXY (or GO_PROXY) is the Go module proxy for the project's build/test.
 # Dependencies/tests/build follow the repository's lockfile (npm, pnpm or yarn);
 # login, publish, version, pack and view always go through npm.
 
@@ -114,16 +121,32 @@ jobs:
       INPUT_OTP: ${{ inputs.otp }}
       INPUT_DIST_TAG: ${{ inputs.dist_tag }}
       INPUT_DRY_RUN: ${{ inputs.dry_run }}
-      # Proxy variables: mapped by ensure-tools for apk/apt/yum and passed
-      # straight through to npm (NPM_CONFIG_PROXY is npm's own spelling).
+      # Endpoint variables.
+      #   APT_PROXY / NPM_PROXY — the value may be a real forward proxy OR an
+      #     internal MIRROR/registry: ensure-tools probes it (does it serve its
+      #     own index?) and uses it accordingly — apt as a repository, npm as an
+      #     install-time registry, and only a genuine proxy as a proxy.
+      #   The generic HTTP(S)_PROXY / ALL_PROXY are plain proxies for everything.
       ALL_PROXY: ${{ vars.ALL_PROXY }}
       HTTP_PROXY: ${{ vars.HTTP_PROXY }}
       HTTPS_PROXY: ${{ vars.HTTPS_PROXY }}
       NO_PROXY: ${{ vars.NO_PROXY }}
       APT_PROXY: ${{ vars.APT_PROXY }}
-      APK_PROXY: ${{ vars.APK_PROXY }}
-      YUM_PROXY: ${{ vars.YUM_PROXY }}
+      NPM_PROXY: ${{ vars.NPM_PROXY }}
       NPM_CONFIG_PROXY: ${{ vars.NPM_CONFIG_PROXY }}
+      # Explicit package mirrors (comma separated; a bare mirror root is fine —
+      # the distro paths come from the image's os-release). Setting one skips the
+      # probe entirely. apk/yum mirrors go here, not into a *_PROXY variable; the
+      # longer *_REPOSITORY names are still accepted.
+      APK_REPO: ${{ vars.APK_REPO }}
+      YUM_REPO: ${{ vars.YUM_REPO }}
+      APK_REPOSITORY: ${{ vars.APK_REPOSITORY }}
+      YUM_REPOSITORY: ${{ vars.YUM_REPOSITORY }}
+      NPM_CONFIG_REGISTRY: ${{ vars.NPM_CONFIG_REGISTRY }}
+      NPM_INSTALL_REGISTRY: ${{ vars.NPM_INSTALL_REGISTRY }}
+      # Go module proxy; GO_PROXY is accepted as the same thing.
+      GOPROXY: ${{ vars.GOPROXY || vars.GO_PROXY }}
+      GO_PROXY: ${{ vars.GO_PROXY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

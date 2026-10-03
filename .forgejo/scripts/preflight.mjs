@@ -23,17 +23,41 @@ export function npmView(name, run = spawnSync) {
     return { ok: false, notFound: /\bE404\b|404 Not Found/i.test(stderr), stderr };
   }
   try {
-    return { ok: true, notFound: false, value: JSON.parse(result.stdout), stderr: '' };
+    return { ok: true, notFound: false, value: normalizeView(JSON.parse(result.stdout)), stderr: '' };
   } catch {
     return { ok: false, notFound: false, stderr: `无法解析 npm view 输出：${String(result.stdout || '').slice(0, 200)}` };
   }
 }
 
-/** The published version list, normalised (npm view prints an array or a string). */
+/**
+ * Collapse whatever `npm view … --json` printed into `{versions, distTags, latest}`.
+ *
+ * The shape is not stable across npm versions and registries: npm 12 wraps the
+ * result in an array (`[{"versions":[…],"dist-tags":{…}}]`), npm 10 prints the
+ * bare object, and a whole packument (or an older registry response) may carry
+ * `versions` as a `{version: manifest}` map. Missing any of these silently
+ * defeated the idempotency gate — an already-published version looked new.
+ */
+export function normalizeView(value) {
+  // `npm view <pkg> versions --json` prints a bare list of version strings.
+  if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+    return { versions: value.slice(), distTags: {}, latest: '' };
+  }
+  const first = Array.isArray(value) ? value[0] : value;
+  const record = first && typeof first === 'object' ? first : {};
+  const rawVersions = record.versions ?? {};
+  const versions = (Array.isArray(rawVersions) ? rawVersions : Object.keys(rawVersions)).filter(
+    (item) => typeof item === 'string',
+  );
+  const distTags = record['dist-tags'] && typeof record['dist-tags'] === 'object' ? record['dist-tags'] : {};
+  const latest = typeof distTags.latest === 'string' ? distTags.latest : '';
+  return { versions, distTags, latest };
+}
+
+/** The published version list, or null when the lookup failed. */
 export function publishedVersions(view) {
   if (!view?.ok) return null;
-  const raw = view.value?.versions ?? view.value;
-  return (Array.isArray(raw) ? raw : [raw]).filter((item) => typeof item === 'string');
+  return view.value.versions;
 }
 
 /**
@@ -42,7 +66,7 @@ export function publishedVersions(view) {
  * the registry does not promise to hand versions back in ascending order.
  */
 export function latestVersion(view, versions = publishedVersions(view) || []) {
-  const tag = view?.value?.['dist-tags']?.latest;
+  const tag = view?.value?.latest;
   if (typeof tag === 'string' && tag) return tag;
   const stable = versions.filter((value) => !String(value).includes('-'));
   const candidates = stable.length > 0 ? stable : versions;

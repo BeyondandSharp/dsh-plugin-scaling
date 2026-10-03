@@ -200,6 +200,19 @@ export function shouldSend(payload) {
   return isAuthUrl(payload.url);
 }
 
+/**
+ * The npm web page for a release, or '' when the package does not live on the
+ * public registry. `NPM_CONFIG_REGISTRY` pointing somewhere else (Verdaccio, an
+ * internal Nexus…) means a www.npmjs.com/v/… link would lead nowhere, so no link
+ * is emitted at all rather than a wrong one.
+ */
+export function npmWebUrl(env, packageValue, version) {
+  if (!packageValue || !version) return '';
+  const registry = String(env?.NPM_CONFIG_REGISTRY || env?.npm_config_registry || '').trim();
+  if (registry && !/(^|\.)npmjs\.(com|org)(\/|$)/i.test(registry)) return '';
+  return `https://www.npmjs.com/package/${packageValue}/v/${version}`;
+}
+
 export function buildPayload({
   phase = 'starting',
   core = {},
@@ -249,7 +262,7 @@ export function buildPayload({
     release: {
       // No run_url here: it used to be forwarded as the payload url and is not
       // something the reader should receive.
-      npm_url: packageValue && version ? `https://www.npmjs.com/package/${packageValue}/v/${version}` : '',
+      npm_url: npmWebUrl(env, packageValue, version),
       tarball: core.tarball || '',
     },
     request_id: requestId || `${repo}@${version}-${core.runNumber || ''}-${core.runAttempt || ''}`,
