@@ -150,6 +150,23 @@ export function findCompleteAuthUrl(text) {
   return '';
 }
 
+/**
+ * Did the CLI refuse because it has no terminal AND did not expose a URL?
+ *
+ * pnpm < 12.5.1 answers a second factor with `ERR_PNPM_OTP_NON_INTERACTIVE` and
+ * no `authUrl`, and its login answers `ERR_PNPM_LOGIN_NON_INTERACTIVE`. There is
+ * nothing to relay in either case, so retrying or waiting would only burn the
+ * timeout — the caller should explain the version requirement instead.
+ */
+export function nonInteractiveRefusal(text) {
+  const source = String(text || '');
+  if (!/NON_INTERACTIVE|not running in an interactive terminal/i.test(source)) return '';
+  const flow = extractAuthFlow(source);
+  if (flow.authUrl) return '';
+  if (/login/i.test(source) && /NON_INTERACTIVE/i.test(source)) return 'login';
+  return 'otp';
+}
+
 /** npm fell back to an interactive username prompt: web login is not available. */
 export function fellBackToPasswordPrompt(text) {
   return /(^|\n)\s*(Username|Password)\s*:/i.test(String(text || ''));

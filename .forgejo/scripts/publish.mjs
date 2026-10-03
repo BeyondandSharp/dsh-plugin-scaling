@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -10,9 +10,20 @@ import {
   findAuthUrl,
   findCompleteAuthUrl,
   needsPty,
+  nonInteractiveRefusal,
   parseLastJsonObject,
   pollDoneUrl,
 } from './npm-auth.mjs';
+import {
+  choosePublisher,
+  loginArgs,
+  parseVersion,
+  PNPM_AUTH_NOTE,
+  publishArgs,
+  supportsNonInteractiveAuth,
+  unsupportedReason,
+  whoamiArgs,
+} from './publisher.mjs';
 
 // Run directly (argv[1] is this file) rather than imported by a test.
 // Compare real paths: /tmp is a symlink on some hosts, and path.resolve
@@ -47,19 +58,42 @@ export function hasPty(run, env) {
   return ptyAvailability(run, env);
 }
 
-/** The npm version, so the fallback decision can be made from facts. */
-export function npmVersion(run = spawnSync) {
-  const result = run('npm', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  return result.status === 0 ? String(result.stdout || '').trim() : '';
+/**
+ * Is `name` an executable on PATH?
+ *
+ * Checked against the filesystem rather than `sh -c 'command -v …'`: a minimal
+ * image may not even have sh(1) on PATH, and that must not read as "the package
+ * manager is missing".
+ */
+export function binaryOnPath(name, env = process.env) {
+  const dirs = String(env.PATH || '').split(':').filter(Boolean);
+  return dirs.some((dir) => {
+    try {
+      const stat = statSync(join(dir, name));
+      return stat.isFile() && (stat.mode & 0o111) !== 0;
+    } catch {
+      return false;
+    }
+  });
 }
 
-/** `npm <args>` as a shell command; wrapped in a PTY only when required. */
-export function npmCommand(args, { usePty, timeoutSeconds } = {}) {
-  const command = `npm ${args.join(' ')}`;
+/** The CLI version, so the fallback decision can be made from facts. */
+export function npmVersion(run = spawnSync, binary = 'npm') {
+  const result = run(binary, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  if (result.status !== 0) return '';
+  // pnpm may print a banner before the number.
+  const match = /(\d+\.\d+\.\d+)/.exec(String(result.stdout || ''));
+  return match ? match[1] : String(result.stdout || '').trim();
+}
+
+/** `<binary> <args>` as a shell command; wrapped in a PTY only when required. */
+export function npmCommand(args, { usePty, timeoutSeconds, binary = 'npm' } = {}) {
+  const command = `${binary} ${args.join(' ')}`;
   const env = 'BROWSER=true';
   if (!usePty) return `${env} ${command}`;
-  const binary = process.env.NPM_SCRIPT_BINARY || 'script';
-  return `${env} timeout ${timeoutSeconds} ${binary} -q -e -c ${JSON.stringify(command)} /dev/null`;
+  // NPM_SCRIPT_BINARY names the PTY helper, not the package manager.
+  const ptyBinary = process.env.NPM_SCRIPT_BINARY || 'script';
+  return `${env} timeout ${timeoutSeconds} ${ptyBinary} -q -e -c ${JSON.stringify(command)} /dev/null`;
 }
 
 /** Strip the \r doubling and ANSI sequences a PTY introduces. */
@@ -78,13 +112,42 @@ async function main() {
   const waitMs = Math.max(30_000, Math.round(waitMinutes * 60_000));
   const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
-  const version = npmVersion();
-  const usePty = needsPty({
-    npmVersion: version,
-    hasPty: ptyAvailability(),
-    ptyForced: String(process.env.NPM_FORCE_PTY || '').toLowerCase() === 'true',
-  });
-  process.stdout.write(`npm ${version || '(版本未知)'}｜${usePty ? 'PTY 回退模式' : '管道模式（无需额外包）'}\n`);
+  const binary = choosePublisher(process.env);
+  if (!binaryOnPath(binary)) {
+    process.stderr.write(
+      `找不到 ${binary}。请安装它（例如 corepack enable pnpm / apk add ${binary}），` +
+        `或把 NPM_PUBLISH_BINARY 设为已安装的工具。\n`,
+    );
+    process.exit(1);
+  }
+  const version = npmVersion(undefined, binary);
+  const nonInteractive = supportsNonInteractiveAuth(binary, version);
+  const usePty = !nonInteractive
+    ? needsPty({
+        npmVersion: version,
+        hasPty: ptyAvailability(),
+        ptyForced: String(process.env.NPM_FORCE_PTY || '').toLowerCase() === 'true',
+      })
+    : false;
+  process.stdout.write(
+    `${binary} ${version || '(版本未知)'}｜${usePty ? 'PTY 回退模式' : '管道模式（无需额外包）'}\n`,
+  );
+  if (!nonInteractive) {
+    const reason = unsupportedReason(binary, version);
+    if (reason) process.stderr.write(`注意：${reason}\n`);
+    if (!usePty && !state.dryRun) {
+      // Neither the CLI nor a PTY can produce a link, so a login would just hang
+      // until the timeout. Say what to change instead.
+      process.stderr.write(
+        '无法自动获取授权链接：' +
+          `${binary} ${version || '(版本未知)'} 在无终端时不暴露链接，且镜像里没有 script(1)。\n` +
+          `请任选其一：升级 ${binary}（npm ≥ 11.9.0 / pnpm ≥ 12.5.1）、安装 util-linux（apk add util-linux）、` +
+          '或改用 npm：NPM_PUBLISH_BINARY=npm。\n',
+      );
+      process.exit(1);
+    }
+  }
+  if (binary === 'pnpm') process.stdout.write(`${PNPM_AUTH_NOTE}\n`);
 
   /** Every URL already forwarded, so the same link is never sent twice. */
   const announced = new Set();
@@ -125,18 +188,13 @@ async function main() {
    */
   const runNpm = (args, { timeoutMs = waitMs, onAuthUrl, phase = 'npm-2fa' } = {}) =>
     new Promise((resolveRun) => {
-      const command = usePty ? npmCommand(args, { usePty, timeoutSeconds: Math.round(waitMs / 1000) }) : 'npm';
+      const command = usePty ? npmCommand(args, { usePty, timeoutSeconds: Math.round(waitMs / 1000), binary }) : binary;
       const useShell = usePty;
-      process.stdout.write(`运行：${useShell ? command : `npm ${args.join(' ')}`}\n`);
+      process.stdout.write(`运行：${useShell ? command : `${binary} ${args.join(' ')}`}\n`);
+      const childEnv = { ...process.env, BROWSER: 'true', npm_config_git_checks: 'false' };
       const child = useShell
-        ? spawn('sh', ['-c', command], {
-            env: { ...process.env, BROWSER: 'true', npm_config_git_checks: 'false' },
-            stdio: ['ignore', 'pipe', 'pipe'],
-          })
-        : spawn('npm', args, {
-            env: { ...process.env, BROWSER: 'true', npm_config_git_checks: 'false' },
-            stdio: ['ignore', 'pipe', 'pipe'],
-          });
+        ? spawn('sh', ['-c', command], { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+        : spawn(binary, args, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
 
       let captured = '';
       let announcedUrl = '';
@@ -188,17 +246,17 @@ async function main() {
     });
 
   const isAuthenticated = () => {
-    const result = spawnSync('npm', ['whoami'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const result = spawnSync(binary, whoamiArgs(), { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return result.status === 0 && String(result.stdout || '').trim() !== '';
   };
 
   // --- 1. login, if needed. ------------------------------------------------
   if (!state.dryRun && !isAuthenticated()) {
-    process.stdout.write('npm 未登录：发起网页登录\n');
+    process.stdout.write(`${binary} 未登录：发起网页登录\n`);
     // npm prints the login link and then polls; relay it from the stream so the
     // human can actually act, instead of waiting for an exit that only happens
     // after they have already logged in.
-    const login = await runNpm(['login', '--auth-type=web'], {
+    const login = await runNpm(loginArgs(binary), {
       timeoutMs: waitMs,
       phase: 'npm-login-required',
       onAuthUrl: (url) => announce(url, 'npm-login-required'),
@@ -218,7 +276,7 @@ async function main() {
     if (loginUrl) {
       await announce(loginUrl, 'npm-login-required', flow.token ? '' : prose.code);
     } else {
-      process.stderr.write('npm login 没有给出登录链接\n');
+      process.stderr.write(`${binary} login 没有给出登录链接\n`);
     }
 
     if (flow.doneUrl) {
@@ -247,8 +305,7 @@ async function main() {
   }
 
   // --- 2. publish, authorising a second factor through doneUrl when needed. --
-  const baseArgs = ['publish', '--access', 'public', '--tag', state.distTag, '--json'];
-  if (state.dryRun) baseArgs.push('--dry-run');
+  const baseArgs = publishArgs(binary, { distTag: state.distTag, dryRun: state.dryRun });
 
   let attempt = await runNpm(baseArgs, { timeoutMs: waitMs });
   let usedOtp = '';
@@ -257,6 +314,15 @@ async function main() {
     const flow = extractAuthFlow(attempt.captured);
     const prose = parseNpmAuthOutput(attempt.captured);
     const authUrl = flow.authUrl || prose.url;
+
+    const refusal = nonInteractiveRefusal(attempt.captured);
+    if (refusal && !authUrl) {
+      process.stderr.write(
+        `${binary} 拒绝了无终端的认证请求（${refusal === 'login' ? '登录' : '二次验证'}），且没有给出授权链接。\n` +
+          `该版本不支持把链接暴露给脚本，请升级（npm ≥ 11.9.0 / pnpm ≥ 12.5.1）或改用 npm。\n`,
+      );
+      process.exit(1);
+    }
 
     if (authUrl) {
       await announce(authUrl, prose.kind || 'npm-2fa', flow.token || prose.code);
@@ -274,14 +340,15 @@ async function main() {
       }
     }
 
-    if (usedOtp || prose.code) {
-      const retryArgs = [...baseArgs, '--otp', usedOtp || prose.code];
+    const otp = usedOtp || prose.code;
+    if (otp) {
+      const retryArgs = publishArgs(binary, { distTag: state.distTag, dryRun: state.dryRun, otp });
       attempt = await runNpm(retryArgs, { timeoutMs: waitMs });
     }
   }
 
   if (attempt.code !== 0) {
-    process.stderr.write(`npm publish 以退出码 ${attempt.code} 结束\n`);
+    process.stderr.write(`${binary} publish 以退出码 ${attempt.code} 结束\n`);
     if (!state.dryRun) {
       const tail = attempt.captured.slice(-4096);
       const parsedTail = extractAuthFlow(tail);
@@ -303,7 +370,7 @@ async function main() {
     process.exit(1);
   }
 
-  process.stdout.write(`npm publish 结束，退出码 0${state.dryRun ? '（dry-run，未写入 registry）' : ''}\n`);
+  process.stdout.write(`${binary} publish 结束，退出码 0${state.dryRun ? '（dry-run，未写入 registry）' : ''}\n`);
   if (process.env.GITHUB_OUTPUT) {
     appendFileSync(process.env.GITHUB_OUTPUT, `published=${state.dryRun ? 'false' : 'true'}\n`);
   }

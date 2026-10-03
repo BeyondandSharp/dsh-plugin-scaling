@@ -30,6 +30,8 @@
 # Missing container tools (script/timeout/git) are installed with the image's
 # package manager through ALL_PROXY / APT_PROXY / APK_PROXY / YUM_PROXY;
 # SKIP_TOOL_INSTALL=true disables that.
+# NPM_PUBLISH_BINARY=npm (default) or pnpm chooses the CLI that logs in and
+# publishes; dependencies/tests/build already follow the repository's lockfile.
 # Other optional variables: NOTIFY_REQUIRED, NOTIFY_TITLE_REPO_ONLY,
 # REQUIRED_ARTIFACTS, PKG_TARGET_DIR, SKIP_TEST, SKIP_BUILD, RELEASE_DIST_TAG,
 # NPM_OTP_WAIT_MINUTES.
@@ -109,6 +111,8 @@ jobs:
       YUM_PROXY: ${{ vars.YUM_PROXY }}
       GO_PROXY: ${{ vars.GO_PROXY }}
       NPM_CONFIG_PROXY: ${{ vars.NPM_CONFIG_PROXY }}
+      # Which CLI logs in and publishes: npm (default) or pnpm. See README.
+      NPM_PUBLISH_BINARY: ${{ vars.NPM_PUBLISH_BINARY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

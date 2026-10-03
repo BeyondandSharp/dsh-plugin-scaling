@@ -64,6 +64,7 @@ export const REQUIRED_SCRIPTS = [
   'notify-lib.mjs',
   'verification-parse.mjs',
   'npm-auth.mjs',
+  'publisher.mjs',
   'deps.mjs',
   'locate-action.mjs',
   'run.mjs',

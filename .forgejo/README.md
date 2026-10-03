@@ -102,6 +102,26 @@ workflow 里每一步都长这样（`配置里没有内嵌脚本`）：
 
 `script(PTY)=缺失` 在 npm ≥ 11.9.0 时**不影响发布**；只有当镜像里的 npm 更旧、且需要网页登录/二次验证时，`ensure-tools` 才会去装 `util-linux`（提供 `script`）作为回退。
 
+### 用 pnpm 发布（`NPM_PUBLISH_BINARY`）
+
+默认用 `npm` 登录与发布；设仓库变量 **`NPM_PUBLISH_BINARY=pnpm`** 就改用 pnpm。**依赖安装/测试/构建本来就按锁文件自动选 pnpm**，这个变量只管"登录 + 发布"。
+
+| | npm | pnpm |
+| --- | --- | --- |
+| 无终端拿到授权链接的最低版本 | **11.9.0** | **12.5.1** |
+| 登录命令 | `npm login --auth-type=web` | `pnpm login` |
+| 发布命令 | `npm publish --access public --tag <t> --json` | 同上 **+ `--no-git-checks`** |
+| 二次验证重试 | `--otp <token>` | `--otp <token>` |
+| 凭据写入 | `~/.npmrc` | 11.25 → `auth.ini`；12.1+ → 全局 `config.yaml` |
+
+要点：
+
+- 两者都会把**授权链接**交给脚本：pnpm 12.5.1+ 在 `--json` 错误里返回 `authUrl`/`doneUrl`（与 npm 同构），`pnpm login` 自 11.19.0 起也无终端打印链接。所以**同样不需要 `script(1)`**。
+- `--no-git-checks` 是必须的：pnpm 拒绝从"脏工作区"发布，而本 Action 会在 `Prepare package` 阶段改写 `package.json` 的版本。
+- **npm 与 pnpm 的凭据互不读取**（写入位置不同），所以同一个 job 里 login 与 publish 必须用同一个工具 —— 本 Action 已保证这一点，但如果你在 job 里另外手动登录过，要注意别混用。
+- 版本不够（比如 pnpm 11.19.0）时，脚本**不会**傻等到超时：会立刻退出并说明"该版本无终端不暴露链接 + 镜像里没有 `script(1)`"，并给出 `升级` / `apk add util-linux` / `NPM_PUBLISH_BINARY=npm` 三条出路。
+- 工具不在 PATH 上时也会立刻报错，而不是抛 `ENOENT`。
+
 ### 代理（无直连出网时）
 
 runner 没有直连外网时，把下列仓库变量填上；它们会同时用于**包管理器安装**、`npm`、`git`：
@@ -357,7 +377,7 @@ node -e "import('/absolute/path/to/.forgejo/scripts/notify-lib.mjs').then((lib) 
 
 ## 测试
 
-本目录的代码在源仓库 `test/` 下有完整测试（131 个用例，直接 import 这里发布的同一批 `.mjs` 文件，另有把整目录复制成 `.forgejo` 后按真实步骤跑通的端到端用例）：
+本目录的代码在源仓库 `test/` 下有完整测试（143 个用例，直接 import 这里发布的同一批 `.mjs` 文件，另有把整目录复制成 `.forgejo` 后按真实步骤跑通的端到端用例）：
 
 ```bash
 node --test test/*.test.mjs                 # 运行全部测试
