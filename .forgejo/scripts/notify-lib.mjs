@@ -14,6 +14,7 @@
 // webhook address, so a copy of the Action never carries one repository's
 // endpoint into another repository.
 
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -150,25 +151,43 @@ export function resolvePayloadUrl({ auth } = {}) {
   return '';
 }
 
-/** Notifications that only make sense with a real authentication link. */
-export const AUTH_PHASES = new Set(['npm-login-required', 'npm-2fa', 'npm-login']);
-
 /**
- * Is this a URL a human can authenticate with? Requires an authentication path,
- * so a bare registry origin (https://registry.npmjs.org) and a repository page
- * (https://git.example.com/owner/repo/actions/runs/11) do not qualify.
+ * The authentication links npm hands out. Two shapes exist and both are
+ * one-time session URLs:
+ *
+ *   * the hosted web-login pair — `https://www.npmjs.com/auth/cli/<uuid>`, or
+ *     the page that carries the same session (`/login?next=/login/cli/<uuid>`);
+ *   * the registry's second-factor challenge — `…/-/auth/login/<id>`, which is
+ *     what npm puts in an `EOTP` body's `authUrl` (its sibling `doneUrl` is
+ *     `…/-/auth/done/<id>` and is deliberately NOT accepted: opening it does
+ *     nothing for the reader).
+ *
+ * These are the single source of truth: registry-auth.mjs and isAuthUrl() both
+ * use them, so the streamed link and the accepted link can never diverge.
  */
+export const AUTH_URL_PATTERNS = [
+  /https?:\/\/\S+\/(?:-\/)?auth\/(?:cli|login)\/[^\s'"]*/g,
+  /https?:\/\/\S+\/[^\s'"?]*\?[^\s'"]*next=[^&#\s]*\/login\/cli\/[^\s'"]*/g,
+];
+
+/** {@link AUTH_URL_PATTERNS} with the trailing-delimiter proof a stream needs. */
+export const AUTH_URL_COMPLETE_PATTERNS = [
+  /(https?:\/\/\S+\/(?:-\/)?auth\/(?:cli|login)\/[^\s'"]*)([\s'"]|$)/g,
+  /(https?:\/\/\S+\/[^\s'"?]*\?[^\s'"]*next=[^&#\s]*\/login\/cli\/[^\s'"]*)([\s'"]|$)/g,
+];
+
 /**
  * Is this a link the reader can actually finish a login or a second factor with?
  *
- * Only npm's one-time session links qualify: `/auth/cli/<uuid>`, or the hosted
- * page that carries the same session (`/login?next=/login/cli/<uuid>`). A generic
- * `/-/web-login` page or a bare login/signin route is deliberately rejected — the
- * Action promises never to hand the reader a page that leads nowhere.
+ * A bare registry origin (`https://registry.npmjs.org`), a run page
+ * (`https://git.example.com/owner/repo/actions/runs/11`), a generic
+ * `/-/web-login` or `/signin` page and the `doneUrl` of an OTP challenge are all
+ * deliberately rejected — the Action promises never to hand the reader a page
+ * that leads nowhere.
  */
 export function isAuthUrl(value) {
   if (!isHttpUrl(value)) return false;
-  if (/\/(?:auth|login)\/cli\/[^/?#\s]+/i.test(value)) return true;
+  if (/\/(?:-\/)?auth\/(?:cli|login)\/[^/?#\s]+/i.test(value)) return true;
   return /[?&]next=[^&#\s]*\/login\/cli\//i.test(value);
 }
 
@@ -280,14 +299,9 @@ export function assertNotifyConfigured(env = process.env) {
 }
 
 function toMessagePusherBody(payload, config) {
-  const anchor = payload.auth?.url || payload.url || payload.release?.run_url || '';
+  const anchor = payload.auth?.url || payload.url || '';
   const code = payload.auth?.code ? `（验证码 ${payload.auth.code}）` : '';
-  const lines = [
-    payload.summary || '',
-    code,
-    anchor ? `链接：${anchor}` : '',
-    payload.release?.run_url && payload.release.run_url !== anchor ? `run：${payload.release.run_url}` : '',
-  ].filter(Boolean);
+  const lines = [payload.summary || '', code, anchor ? `链接：${anchor}` : ''].filter(Boolean);
   return {
     title: payload.title,
     description: payload.summary || '',
@@ -300,13 +314,16 @@ function toMessagePusherBody(payload, config) {
 
 /**
  * One marker per (request, url): a run can legitimately deliver several different
- * authentication URLs (the derived login page first, then npm's one-time
- * `auth/cli/<uuid>` challenge), and keying on the request id alone silently
- * dropped the second one — the address the user actually needs.
+ * authentication URLs (the login link first, then the one-time second-factor
+ * challenge), and keying on the request id alone silently dropped the second one
+ * — the address the user actually needs.
+ *
+ * The key is a digest rather than a truncated path fragment: two long URLs that
+ * share a prefix must not collapse into the same marker.
  */
 function idempotencyPath(config, requestId, url) {
-  const key = `${requestId}|${url}`.replace(/[^\w.-]+/g, '_');
-  return join(config.stateDir, `notify-${key.slice(0, 120)}.json`);
+  const digest = createHash('sha256').update(`${requestId}\n${url}`).digest('hex').slice(0, 32);
+  return join(config.stateDir, `notify-${digest}.json`);
 }
 
 async function attemptDelivery(payload, config, fetchImpl) {
@@ -403,10 +420,4 @@ export async function deliver(payload, options = {}) {
     }
   }
   throw lastError;
-}
-
-/** Human-readable log line for a delivery result. */
-export function describeDelivery(payload, result) {
-  if (result.skipped) return `webhook 已投递过（request_id=${payload.request_id}），本次跳过`;
-  return `webhook 投递成功（HTTP ${result.status}, phase=${payload.phase}）`;
 }

@@ -1,11 +1,11 @@
 // deps.mjs — install the container tools the Action needs, using whatever
 // package manager the image provides, through the configured proxy.
 //
-// Two things this solves:
-//   * `script(1)` (util-linux/bsdutils) is missing on Alpine/BusyBox images; it
-//     is only needed as a fallback for npm older than 11.9.0, which hides the
-//     web-authorisation URL when it has no terminal;
-//   * minimal Debian/yum images may lack git or the package that provides it.
+// What is genuinely required:
+//   * `script(1)` (util-linux/bsdutils) — npm only offers the web authorisation
+//     flow when stdin and stdout are TTYs, so the publish/login calls run under
+//     a PTY. Alpine/BusyBox images do not ship it, hence the util-linux install;
+//   * `git` — the changelog and the "tag did not move" check.
 //
 // Proxy support: containers are routinely built without direct network access,
 // so every proxy variable the surrounding infrastructure may export is honoured
@@ -23,8 +23,6 @@ export const PROXY_VARS = [
   'APT_PROXY',
   'APK_PROXY',
   'YUM_PROXY',
-  'GO_PROXY',
-  'NPM_CONFIG_PROXY',
 ];
 
 /**
@@ -104,26 +102,12 @@ export const PROVIDERS = {
     dnf: ['util-linux'],
     microdnf: ['util-linux'],
   },
-  timeout: {
-    'apt-get': ['coreutils'],
-    apk: ['coreutils', 'busybox-extras'],
-    yum: ['coreutils'],
-    dnf: ['coreutils'],
-    microdnf: ['coreutils'],
-  },
   git: {
     'apt-get': ['git'],
     apk: ['git'],
     yum: ['git'],
     dnf: ['git'],
     microdnf: ['git'],
-  },
-  bash: {
-    'apt-get': ['bash'],
-    apk: ['bash'],
-    yum: ['bash'],
-    dnf: ['bash'],
-    microdnf: ['bash'],
   },
 };
 
@@ -151,7 +135,7 @@ export function needsIndexRefresh(manager) {
 }
 
 /** Which tool binaries the Action wants, in the order they matter. */
-export const REQUIRED_TOOLS = ['git', 'script', 'timeout'];
+export const REQUIRED_TOOLS = ['git', 'script'];
 
 /** Report which of `tools` are missing, using `command -v`. */
 export function missingTools(tools = REQUIRED_TOOLS, run = spawnSync) {

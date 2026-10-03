@@ -1,25 +1,33 @@
-// publisher.mjs — which CLI performs the login and the publish, and how.
+// publisher.mjs — the CLI that logs in and publishes: npm, and only npm.
 //
-// npm is the default, but pnpm works too and needs no PTY either:
-//   * `pnpm login` (v11+) prints the authorisation URL without a terminal since
-//     v11.19.0 and then polls, exactly like npm;
-//   * since pnpm 12.5.1 a write that needs a second factor reports `authUrl` and
-//     `doneUrl` in its `--json` error, mirroring npm >= 11.9.0;
-//   * `pnpm publish --otp <token>` accepts the token the `doneUrl` poll returns.
+// npm drives the whole token-free flow itself, as long as it has a terminal:
 //
-// The differences that matter are the command shape (`--no-git-checks`, because
-// pnpm refuses to publish from a dirty worktree and the release rewrites
-// package.json) and the minimum version that exposes the URLs.
+//   * `npm login --auth-type=web` POSTs `/-/v1/login`, prints the returned
+//     `loginUrl`, polls `doneUrl` until the browser flow finishes and stores the
+//     resulting token in `~/.npmrc`;
+//   * a write that needs a second factor fails with `EOTP` whose body carries
+//     `authUrl`/`doneUrl`; npm's own `otplease` then prints the `authUrl`, polls
+//     `doneUrl` and retries the publish with the one-time token it got back.
+//
+// Both branches live behind `process.stdin.isTTY && process.stdout.isTTY` in
+// npm's lib/utils/auth.js, so every call runs under `script(1)` (see pty.mjs).
+// The script never has to poll `doneUrl` or pass `--otp` for the web flow —
+// npm does that; `--otp` remains for registries that only accept a typed code.
+//
+// The first npm that exposes `authUrl`/`doneUrl` in the EOTP body is 10.9.x,
+// which is also what node:22-bookworm ships. Older npm cannot complete a
+// second factor headlessly, so the version is checked before publishing.
 
-/** Minimum version of each tool that exposes authUrl/doneUrl without a TTY. */
-export const MIN_VERSION = {
-  npm: [11, 9, 0],
-  pnpm: [12, 5, 1],
-};
+import { statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
-export const PUBLISHERS = ['npm', 'pnpm'];
+export const BINARY = 'npm';
 
-/** Parse "11.19.0" / "12.5.1" (tolerating a leading v) into numbers. */
+/** The lowest npm whose EOTP body carries authUrl/doneUrl (10.9.x). */
+export const MIN_VERSION = [10, 9, 0];
+export const MIN_VERSION_TEXT = MIN_VERSION.join('.');
+
+/** Parse "10.9.2" (tolerating a leading v or surrounding noise). */
 export function parseVersion(text) {
   const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(text || ''));
   if (!match) return null;
@@ -27,7 +35,7 @@ export function parseVersion(text) {
 }
 
 /** Is `version` at least `floor`? Unknown versions fail open (we try anyway). */
-export function versionAtLeast(version, floor) {
+export function versionAtLeast(version, floor = MIN_VERSION) {
   const found = Array.isArray(version) ? version : parseVersion(version);
   if (!found) return true;
   for (let index = 0; index < floor.length; index += 1) {
@@ -39,62 +47,54 @@ export function versionAtLeast(version, floor) {
   return true;
 }
 
+/** '' when this npm can expose the URLs, otherwise the reason it cannot. */
+export function unsupportedReason(version) {
+  if (versionAtLeast(version)) return '';
+  return `npm ${String(version || '').trim() || '(版本未知)'} 低于 ${MIN_VERSION_TEXT}：该版本不会把授权链接交给脚本，无法完成网页登录/二次验证。`;
+}
+
 /**
- * Choose the CLI: `NPM_PUBLISH_BINARY` when set, otherwise npm.
- * `installed` lets a caller prefer pnpm only when it is actually present.
+ * Is `name` an executable on PATH?
+ *
+ * Checked against the filesystem rather than `sh -c 'command -v …'`: a minimal
+ * image may not even have sh(1) on PATH, and that must not read as "npm is
+ * missing". Symlinks are followed by statSync, which is how the node images
+ * ship /usr/local/bin/npm.
  */
-export function choosePublisher(env = process.env, { installed = PUBLISHERS } = {}) {
-  const configured = String(env.NPM_PUBLISH_BINARY || '').trim().toLowerCase();
-  if (configured) {
-    if (!PUBLISHERS.includes(configured)) {
-      throw new Error(`NPM_PUBLISH_BINARY 只支持 ${PUBLISHERS.join(' / ')}，收到：${configured}`);
+export function binaryOnPath(name, env = process.env, { stat = statSync } = {}) {
+  const dirs = String(env.PATH || '').split(':').filter(Boolean);
+  return dirs.some((dir) => {
+    try {
+      const info = stat(`${dir.replace(/\/+$/, '')}/${name}`);
+      return info.isFile() && (info.mode & 0o111) !== 0;
+    } catch {
+      return false;
     }
-    return configured;
-  }
-  return installed.includes('npm') ? 'npm' : installed[0];
+  });
 }
 
 /**
- * Does this tool/version expose the authorisation URLs to a non-TTY process?
- * When it does not, a PTY (script(1)) is the only remaining way to see them.
+ * The installed npm version, or '' when it cannot be determined.
+ *
+ * Runs `npm --version`; a banner before the number is tolerated.
  */
-export function supportsNonInteractiveAuth(binary, version) {
-  const floor = MIN_VERSION[binary];
-  if (!floor) return false;
-  return versionAtLeast(version, floor);
+export function npmVersion(run = spawnSync, env = process.env) {
+  const result = run(BINARY, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env });
+  if (result.status !== 0) return '';
+  const match = /(\d+\.\d+\.\d+)/.exec(String(result.stdout || ''));
+  return match ? match[1] : String(result.stdout || '').trim();
 }
 
-/** Reason a tool cannot be used, or '' when it is fine. */
-export function unsupportedReason(binary, version) {
-  const floor = MIN_VERSION[binary];
-  if (!floor) return `不支持的发版工具：${binary}`;
-  if (versionAtLeast(version, floor)) return '';
-  const needed = floor.join('.');
-  return `${binary} ${version || '(版本未知)'} 低于 ${needed}：该版本在无终端时不会暴露授权链接。`;
-}
-
-/** The publish arguments for the chosen CLI. */
-export function publishArgs(binary, { distTag = 'latest', access = 'public', dryRun = false, otp = '' } = {}) {
+/** The publish arguments. npm has no dirty-worktree check, so no extra flag. */
+export function publishArgs({ distTag = 'latest', access = 'public', dryRun = false, otp = '' } = {}) {
   const args = ['publish', '--access', access, '--tag', distTag];
-  if (binary === 'pnpm') {
-    // pnpm refuses to publish from a dirty worktree and the release aligns
-    // package.json's version before packing.
-    args.push('--no-git-checks');
-  }
-  args.push('--json');
   if (dryRun) args.push('--dry-run');
   if (otp) args.push('--otp', otp);
   return args;
 }
 
-/** The login arguments for the chosen CLI. */
-export function loginArgs(binary, { registry = '' } = {}) {
-  if (binary === 'pnpm') {
-    // pnpm's web login is the default; --registry pins a self-hosted registry.
-    const args = ['login'];
-    if (registry) args.push('--registry', registry);
-    return args;
-  }
+/** The login arguments. `--auth-type=web` is the token-free browser flow. */
+export function loginArgs({ registry = '' } = {}) {
   const args = ['login', '--auth-type=web'];
   if (registry) args.push('--registry', registry);
   return args;
@@ -105,7 +105,26 @@ export function whoamiArgs() {
   return ['whoami'];
 }
 
-/** Where pnpm keeps the token it writes on login (v12.1+ uses config.yaml). */
-export const PNPM_AUTH_NOTE =
-  'pnpm 12.1+ 把凭据写入全局 config.yaml（11.25 写入 auth.ini），npm 写入 ~/.npmrc；两者互不读取，' +
-  '因此该 job 内的 login 与 publish 必须用同一个工具。';
+/** `--otp <code>` is a credential: never let it reach a log line. */
+export function redactArgs(args) {
+  const out = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '--otp') {
+      out.push('--otp', '***');
+      index += 1;
+      continue;
+    }
+    out.push(typeof arg === 'string' && arg.startsWith('--otp=') ? '--otp=***' : arg);
+  }
+  return out;
+}
+
+/** `npm <args>` as a shell command, for logging (OTP masked). */
+export function npmCommand(args) {
+  return `${BINARY} ${redactArgs(args).join(' ')}`;
+}
+
+/** Where npm keeps the token it writes on login. */
+export const NPM_AUTH_NOTE =
+  'npm 把登录凭据写入 ~/.npmrc（userconfig）；本流程的登录与发布都用 npm，二者一致。';
