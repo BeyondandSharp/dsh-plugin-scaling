@@ -1,0 +1,193 @@
+# npm-publish — tag-triggered npm release with webhook relay for verification URLs.
+#
+# The programs live as real files in <action>/scripts/*.mjs and are executed with
+# `node "$forgejo_dir/scripts/<name>.mjs"`; this file only orchestrates them.
+#
+# Usage: copy this npm-publish/ directory into a target repository, rename it to
+# .forgejo, and the workflow runs there. It only reads the target repository's
+# package.json, lock file, build outputs and git history.
+#
+# Flow: tag push -> version check -> tests -> build -> pack check -> npm publish
+# -> Forgejo release. There is no approval prompt. When npm demands a login or a
+# second factor, the verification URL (and code) npm prints is forwarded to the
+# configured webhook as POST application/json, while npm itself keeps polling
+# until the human finishes in the browser.
+#
+# Repository secrets: MESSAGE_PUSHER_TOKEN (optional), FORGEJO_TOKEN (optional;
+# without it the Forgejo release step is skipped). No npm token is used:
+# authentication is npm's own web flow, relayed to a human:
+#   1. not logged in -> `npm login --auth-type=web` prints an auth/cli/<uuid> URL,
+#      which is forwarded; npm keeps polling until the browser login completes;
+#   2. then `npm publish` runs; when a second factor is due npm prints a second
+#      auth/cli/<uuid> URL, forwarded the same way, and finishes once confirmed.
+# Every npm invocation runs under a TTY (script(1)) because without one npm
+# refuses the interactive flow and only prints E401. NPM_AUTH_WAIT_MINUTES bounds
+# each wait.
+# Repository variable MESSAGE_PUSHER_URL is REQUIRED — the webhook destination is
+# deliberately not shipped with the Action, so each repository supplies its own.
+# Optional NPM_PUBLISH_RUNNER_LABEL (default `docker`) and NPM_PUBLISH_IMAGE
+# (default `node:22-bookworm`) retarget the runner label and the job image.
+# Missing container tools (script/timeout/git) are installed with the image's
+# package manager through ALL_PROXY / APT_PROXY / APK_PROXY / YUM_PROXY;
+# SKIP_TOOL_INSTALL=true disables that.
+# Other optional variables: NOTIFY_REQUIRED, NOTIFY_TITLE_REPO_ONLY,
+# REQUIRED_ARTIFACTS, PKG_TARGET_DIR, SKIP_TEST, SKIP_BUILD, RELEASE_DIST_TAG,
+# NPM_OTP_WAIT_MINUTES.
+
+name: npm-publish
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+      - '[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本，例如 1.4.0；填写时必须与已有 tag 的版本一致'
+        required: false
+        type: string
+      otp:
+        description: '可选：npm 一次性验证码（对应 npm publish --otp）'
+        required: false
+        type: string
+      dist_tag:
+        description: '可选：npm dist-tag（默认正式版 latest、预发布 next）'
+        required: false
+        type: string
+      dry_run:
+        description: '只演练 npm publish --dry-run，不写入 registry'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+# `sh`, not `bash`: Alpine and other minimal images ship BusyBox sh but no bash
+# (`/bin/sh` exists everywhere). The few remaining shell lines are POSIX.
+defaults:
+  run:
+    shell: sh
+
+jobs:
+  release:
+    name: npm release
+    # Both the runner label and the job image are repository variables so a
+    # repository can point at a differently named label or an internal mirror.
+    # Defaults keep the Action working with no configuration: `docker` is the
+    # conventional label name and node:22-bookworm matches the runner's own
+    # default image (see the runner's labels package).
+    runs-on: ${{ vars.NPM_PUBLISH_RUNNER_LABEL || 'docker' }}
+    container:
+      image: ${{ vars.NPM_PUBLISH_IMAGE || 'node:22-bookworm' }}
+    timeout-minutes: 60
+    env:
+      MESSAGE_PUSHER_URL: ${{ vars.MESSAGE_PUSHER_URL }}
+      NOTIFY_REQUIRED: ${{ vars.NOTIFY_REQUIRED }}
+      NOTIFY_TITLE_REPO_ONLY: ${{ vars.NOTIFY_TITLE_REPO_ONLY }}
+      REQUIRED_ARTIFACTS: ${{ vars.REQUIRED_ARTIFACTS }}
+      PKG_TARGET_DIR: ${{ vars.PKG_TARGET_DIR }}
+      SKIP_TEST: ${{ vars.SKIP_TEST }}
+      SKIP_BUILD: ${{ vars.SKIP_BUILD }}
+      RELEASE_DIST_TAG: ${{ vars.RELEASE_DIST_TAG }}
+      INPUT_VERSION: ${{ inputs.version }}
+      INPUT_OTP: ${{ inputs.otp }}
+      INPUT_DIST_TAG: ${{ inputs.dist_tag }}
+      INPUT_DRY_RUN: ${{ inputs.dry_run }}
+      MESSAGE_PUSHER_TOKEN: ${{ secrets.MESSAGE_PUSHER_TOKEN }}
+      FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+      # Proxies: passed through for the package managers (ensure-tools), npm and
+      # git. Set them as repository variables when the runner has no direct egress.
+      ALL_PROXY: ${{ vars.ALL_PROXY }}
+      HTTP_PROXY: ${{ vars.HTTP_PROXY }}
+      HTTPS_PROXY: ${{ vars.HTTPS_PROXY }}
+      NO_PROXY: ${{ vars.NO_PROXY }}
+      APT_PROXY: ${{ vars.APT_PROXY }}
+      APK_PROXY: ${{ vars.APK_PROXY }}
+      YUM_PROXY: ${{ vars.YUM_PROXY }}
+      GO_PROXY: ${{ vars.GO_PROXY }}
+      NPM_CONFIG_PROXY: ${{ vars.NPM_CONFIG_PROXY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history for the changelog; fetch-tags because a tag-triggered
+          # checkout does not necessarily materialise refs/tags/<tag>, and the
+          # version check below uses it when it is available.
+          fetch-depth: 0
+          fetch-tags: true
+
+      # github.action_path is empty for workflows (it is set only for a
+      # `uses: ./path` local action), so the copied .forgejo directory is found by
+      # the program and published as forgejo_dir. The two lines below only locate
+      # the entry point itself: the real search (nested checkouts, parent mounts,
+      # diagnostics) lives in locate-action.mjs.
+      - name: Locate action directory
+        id: locate
+        run: |
+          dir="${{ github.action_path }}"
+          [ -f "$dir/scripts/run.mjs" ] || dir="$GITHUB_WORKSPACE/.forgejo"
+          [ -f "$dir/scripts/run.mjs" ] || dir="$(dirname "$(dirname "$(find "$GITHUB_WORKSPACE" -maxdepth 6 -name run.mjs -path '*/scripts/*' -print -quit)")")"
+          node "$dir/scripts/run.mjs" locate-action
+
+      # Install missing container tools (script/timeout/git) with the image's own
+      # package manager, through the configured proxy. Skipped automatically when
+      # everything is present; SKIP_TOOL_INSTALL=true opts out.
+      - name: Ensure container tools
+        run: |
+          dir="${{ steps.locate.outputs.forgejo_dir }}"
+          node "$dir/scripts/run.mjs" ensure-tools
+
+      - name: Verify action scripts
+        run: |
+          dir="${{ steps.locate.outputs.forgejo_dir }}"
+          node "$dir/scripts/run.mjs" verify-action
+
+      - name: Install dependencies
+        run: |
+          dir="${{ steps.locate.outputs.forgejo_dir }}"
+          node "$dir/scripts/run.mjs" install-deps
+
+      - name: Resolve version from tag
+        run: |
+          dir="${{ steps.locate.outputs.forgejo_dir }}"
+          node "$dir/scripts/run.mjs" resolve
+
+      - name: Preflight version checks
+        run: |
+          dir="${{ steps.locate.outputs.forgejo_dir }}"
+          node "$dir/scripts/run.mjs" preflight
+
+      - name: Test
+        run: |
+          dir="${{ steps.locate.outputs.forgejo_dir }}"
+          node "$dir/scripts/run.mjs" test
+
+      - name: Build
+        run: |
+          dir="${{ steps.locate.outputs.forgejo_dir }}"
+          node "$dir/scripts/run.mjs" build
+
+      - name: Prepare package
+        run: |
+          dir="${{ steps.locate.outputs.forgejo_dir }}"
+          node "$dir/scripts/run.mjs" prepare
+
+      - name: Publish to npm
+        run: |
+          dir="${{ steps.locate.outputs.forgejo_dir }}"
+          node "$dir/scripts/run.mjs" publish
+
+      - name: Create Forgejo release
+        if: env.FORGEJO_TOKEN != ''
+        run: |
+          dir="${{ steps.locate.outputs.forgejo_dir }}"
+          node "$dir/scripts/run.mjs" release
+
+      - name: Notify failure
+        if: failure()
+        run: |
+          dir="${{ steps.locate.outputs.forgejo_dir }}"
+          node "$dir/scripts/run.mjs" notify-failure

@@ -432,7 +432,20 @@ export function installPaneScaling(target: HTMLElement, ctx: unknown, options: I
   }
 }
 
+/**
+ * How far one gesture moves the zoom: this fraction of the current value, never
+ * less than one percent.
+ *
+ * The range spans 1%–500%, so a fixed step would either be useless at the fine
+ * end (1% is 99 gestures below 100% at 5% each) or unbearably slow at the top.
+ * A proportional step keeps the familiar 5% per notch at 100%, gives 1% steps
+ * below ~20%, and 25% per notch at 500%.
+ */
+const STEP_RATIO = 0.05
+
 /** Clamp one step of movement; 0 always means "back to 100%". */
 function clampTarget(current: number, direction: 1 | -1 | 0): number {
-  return direction === 0 ? DEFAULT_STEP : clampStep(current + direction)
+  if (direction === 0) return DEFAULT_STEP
+  const delta = Math.max(1, Math.round(current * STEP_RATIO))
+  return clampStep(current + direction * delta)
 }

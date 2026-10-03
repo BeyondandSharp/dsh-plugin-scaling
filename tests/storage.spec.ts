@@ -22,24 +22,24 @@ function store(initial?: string): ZoomStore & { value: string | null } {
 }
 
 describe('step scale', () => {
-  it('anchors 100% at step 20 and stringifies exactly', () => {
-    expect(DEFAULT_STEP).toBe(20)
+  it('anchors 100% at step 100 and stringifies exactly', () => {
+    expect(DEFAULT_STEP).toBe(100)
     expect(stepToZoom(DEFAULT_STEP)).toBe(1)
-    expect(String(stepToZoom(21))).toBe('1.05')
-    expect(String(stepToZoom(15))).toBe('0.75')
-    expect(String(stepToZoom(30))).toBe('1.5')
+    expect(String(stepToZoom(105))).toBe('1.05')
+    expect(String(stepToZoom(1))).toBe('0.01')
+    expect(String(stepToZoom(500))).toBe('5')
   })
 
-  it('uses 5% steps across 75%–150%', () => {
-    expect(MIN_STEP).toBe(15)
-    expect(MAX_STEP).toBe(30)
+  it('reaches every percent from 1% to 500%', () => {
+    expect(MIN_STEP).toBe(1)
+    expect(MAX_STEP).toBe(500)
     for (let step = MIN_STEP; step <= MAX_STEP; step += 1) {
       expect(zoomToStep(stepToZoom(step))).toBe(step)
     }
   })
 
   it('clamps and rejects non-finite values', () => {
-    expect(clampStep(99)).toBe(MAX_STEP)
+    expect(clampStep(999)).toBe(MAX_STEP)
     expect(clampStep(-99)).toBe(MIN_STEP)
     expect(clampStep(Number.NaN)).toBe(DEFAULT_STEP)
     expect(clampStep(Number.POSITIVE_INFINITY)).toBe(DEFAULT_STEP)
@@ -53,13 +53,13 @@ describe('decodeZoom', () => {
   })
 
   it('round-trips a stored document', () => {
-    const steps = { left: 15, center: 21, right: 30, 'right-1': 17, preview: 26 }
+    const steps = { left: 15, center: 105, right: 300, 'right-1': 85, preview: 130 }
     expect(decodeZoom(encodeZoom(steps))).toEqual(steps)
   })
 
   it('pins the documented stored schema (zoom factors, not steps)', () => {
-    expect(encodeZoom({ left: 21, center: 20, right: 15, 'right-1': 20, preview: 20 }))
-      .toBe('{"left":1.05,"center":1,"right":0.75,"right-1":1,"preview":1}')
+    expect(encodeZoom({ left: 105, center: 100, right: 15, 'right-1': 100, preview: 100 }))
+      .toBe('{"left":1.05,"center":1,"right":0.15,"right-1":1,"preview":1}')
   })
 
   it('ignores corrupt JSON, wrong shapes, and per-pane junk', () => {
@@ -67,13 +67,13 @@ describe('decodeZoom', () => {
     expect(decodeZoom('null')).toEqual(defaultSteps())
     expect(decodeZoom('[1,2,3]')).toEqual(defaultSteps())
     expect(decodeZoom('{"left":"1.5","center":true}')).toEqual(defaultSteps())
-    expect(decodeZoom('{"left":1.05}')).toEqual({ left: 21, center: 20, right: 20, 'right-1': 20, preview: 20 })
+    expect(decodeZoom('{"left":1.05}')).toEqual({ left: 105, center: 100, right: 100, 'right-1': 100, preview: 100 })
   })
 
   it('clamps out-of-range stored values', () => {
-    expect(decodeZoom('{"left":0.1,"center":5,"right":1.5}')).toEqual({ left: 15, center: 30, right: 30, 'right-1': 20, preview: 20 })
-    expect(decodeZoom('{"left":1,"right-1":0.75,"right-2":1.5}')).toEqual({ left: 20, center: 20, right: 20, 'right-1': 15, preview: 20 })
-    expect(decodeZoom('{"preview":1.5}')).toEqual({ left: 20, center: 20, right: 20, 'right-1': 20, preview: 30 })
+    expect(decodeZoom('{"left":0.001,"center":9,"right":1.5}')).toEqual({ left: 1, center: 500, right: 150, 'right-1': 100, preview: 100 })
+    expect(decodeZoom('{"left":1,"right-1":0.75,"right-2":1.5}')).toEqual({ left: 100, center: 100, right: 100, 'right-1': 75, preview: 100 })
+    expect(decodeZoom('{"preview":5}')).toEqual({ left: 100, center: 100, right: 100, 'right-1': 100, preview: 500 })
     expect(decodeZoom('{"left":null}')).toEqual(defaultSteps())
   })
 })
@@ -81,7 +81,7 @@ describe('decodeZoom', () => {
 describe('readZoom / writeZoom', () => {
   it('round-trips through a store', () => {
     const target = store()
-    const steps = { left: 17, center: 20, right: 25, 'right-1': 21, preview: 22 }
+    const steps = { left: 85, center: 100, right: 125, 'right-1': 105, preview: 110 }
     writeZoom(target, steps)
     expect(target.value).toBe('{"left":0.85,"center":1,"right":1.25,"right-1":1.05,"preview":1.1}')
     expect(readZoom(target)).toEqual(steps)

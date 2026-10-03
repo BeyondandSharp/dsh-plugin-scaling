@@ -1,7 +1,10 @@
 # dsh-plugin-scaling
 
-给 DSH Web GUI 的三栏（左栏 / 中间主窗口 / 右栏）做**各自独立**的整体缩放：75%–150%、每档 5%。
+给 DSH Web GUI 的三栏（左栏 / 中间主窗口 / 右栏）做**各自独立**的整体缩放：**1%–500%**。
 纯前端插件：不改宿主、不依赖皮肤，数值存在插件自己的 `localStorage` 里。
+
+每档步长是**按当前值的比例**走的（不小于 1%）：100% 时一格 = 5%（和原来一致），
+20% 以下一格 = 1%，接近 500% 时一格 = 25% —— 这样 1% 与 500% 两端都在几下之内够得着。
 
 ## 用法
 
@@ -46,7 +49,7 @@ dsh plugin --profile web add github:BeyondandSharp/dsh-plugin-scaling
 localStorage['dsh.plugin-scaling.v1'] = {"left":1,"center":1,"right":1,"right-1":1}
 ```
 
-`right` 是第一列、`right-1` 是右栏第二列。存储不可用（隐私模式等）时退化为纯内存；损坏或越界的项按项忽略并夹紧到 75%–150%。
+`right` 是第一列、`right-1` 是右栏第二列。存储不可用（隐私模式等）时退化为纯内存；损坏或越界的项按项忽略并夹紧到 1%–500%。
 
 缩放机制由引擎探针决定：**Gecko（Firefox）用 `transform`，其它引擎用 `zoom`**——Gecko 的 `zoom`
 不作用于 `border-image` 的九宫格几何，会让皮肤用对称素材画的装饰（「新会话」缎带、输入框外框）

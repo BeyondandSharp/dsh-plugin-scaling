@@ -180,7 +180,7 @@ describe('wheel scaling end to end', () => {
     expect(wheel(element(document, '.cv_root'))).toBe(true)
     expect(style(zoomVariable('center'))).toBe('1.05')
     expect(style(zoomVariable('left'))).toBe('1')
-    expect(decodeZoom(localStorage.getItem(STORE_KEY)).center).toBe(21)
+    expect(decodeZoom(localStorage.getItem(STORE_KEY)).center).toBe(105)
     const badge = document.querySelector('[data-pane-scaling-badge]')
     expect(badge?.textContent).toContain('中栏 105%')
     expect(badge?.hasAttribute('data-pane-scaling-badge-visible')).toBe(true)
@@ -188,17 +188,33 @@ describe('wheel scaling end to end', () => {
     expect(badge?.hasAttribute('data-pane-scaling-badge-visible')).toBe(false)
   })
 
-  it('clamps at 150% and 75% without redundant writes', () => {
+  it('clamps at 500% and 1% without redundant writes', () => {
     harness = activate()
     const pane = element(document, '.sb_root')
-    for (let index = 0; index < 12; index += 1) wheel(pane)
-    expect(style(zoomVariable('left'))).toBe('1.5')
+    for (let index = 0; index < 60; index += 1) wheel(pane)
+    expect(style(zoomVariable('left'))).toBe('5')
     const spy = vi.spyOn(CSSStyleDeclaration.prototype, 'setProperty')
     wheel(pane)
-    expect(style(zoomVariable('left'))).toBe('1.5')
+    expect(style(zoomVariable('left'))).toBe('5')
     expect(spy.mock.calls.filter(([name]) => String(name).startsWith('--pane-scaling'))).toHaveLength(0)
-    for (let index = 0; index < 20; index += 1) wheel(pane, 100)
-    expect(style(zoomVariable('left'))).toBe('0.75')
+    for (let index = 0; index < 200; index += 1) wheel(pane, 100)
+    expect(style(zoomVariable('left'))).toBe('0.01')
+    expect(decodeZoom(localStorage.getItem(STORE_KEY)).left).toBe(1)
+  })
+
+  it('steps proportionally, so the fine end is reachable', () => {
+    harness = activate()
+    const pane = element(document, '.sb_root')
+    // 5% per notch at 100%, 1% per notch once the value is small.
+    wheel(pane)
+    expect(style(zoomVariable('left'))).toBe('1.05')
+    for (let index = 0; index < 30; index += 1) wheel(pane, 100)
+    expect(Number(style(zoomVariable('left')))).toBeLessThan(0.3)
+    const steps = 60
+    for (let index = 0; index < steps && Number(style(zoomVariable('left'))) > 0.05; index += 1) wheel(pane, 100)
+    expect(style(zoomVariable('left'))).toBe('0.05')
+    wheel(pane, 100)
+    expect(style(zoomVariable('left'))).toBe('0.04')
   })
 
   it('scales each split right column on its own and keeps both values', () => {
@@ -216,7 +232,7 @@ describe('wheel scaling end to end', () => {
     expect(wheel(first, 100)).toBe(true)
     expect(style(zoomVariable('right'))).toBe('0.95')
     expect(style(zoomVariable('right-1'))).toBe('1.05')
-    expect(decodeZoom(localStorage.getItem(STORE_KEY))).toMatchObject({ right: 19, 'right-1': 21 })
+    expect(decodeZoom(localStorage.getItem(STORE_KEY))).toMatchObject({ right: 95, 'right-1': 105 })
     // The keyboard acts on the slot that holds focus.
     second.tabIndex = 0
     second.focus()
@@ -274,7 +290,7 @@ describe('wheel scaling end to end', () => {
     await tick()
     harness.flush()
     expect(style(zoomVariable('preview'))).toBe('1')
-    expect(decodeZoom(localStorage.getItem(STORE_KEY)).preview).toBe(20)
+    expect(decodeZoom(localStorage.getItem(STORE_KEY)).preview).toBe(100)
   })
 
   it('leaves the pane toolbar to the browser page zoom', () => {
@@ -356,10 +372,11 @@ describe('calibration wiring', () => {
     wheel(element(document, '.sb_root'))
     expect(style(zoomVariable('left'))).toBe('1.05')
     expect(style(fillWidthVariable('left'))).toBe('304.762px')
-    // Zooming out follows too: 320 / 0.75 at the low end.
+    // Zooming out follows too: the compensation is always frozen / zoom.
     for (let index = 0; index < 6; index += 1) wheel(element(document, '.sb_root'), 100)
-    expect(style(zoomVariable('left'))).toBe('0.75')
-    expect(style(fillWidthVariable('left'))).toBe(`${String(Number((320 / 0.75).toFixed(3)))}px`)
+    const zoomedOut = Number(style(zoomVariable('left')))
+    expect(zoomedOut).toBeLessThan(1)
+    expect(style(fillWidthVariable('left'))).toBe(`${String(Number((320 / zoomedOut).toFixed(3)))}px`)
     // A host re-render that drops the frozen width releases the pane again.
     element(document, '.sb_root').style.removeProperty('width')
     wheel(element(document, '.cv_root'))

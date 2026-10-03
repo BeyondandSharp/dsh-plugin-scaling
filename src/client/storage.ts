@@ -1,22 +1,22 @@
-/** Zoom persistence: one integer step index per slot, validated and clamped. */
+/** Zoom persistence: one integer percent per slot, validated and clamped. */
 import type { SlotId } from './targets.ts'
 
 /** localStorage key owned by this plugin. */
 export const STORE_KEY = 'dsh.plugin-scaling.v1'
 
-/** 75%. */
-export const MIN_STEP = 15
+/** 1%. */
+export const MIN_STEP = 1
 
-/** 150%. */
-export const MAX_STEP = 30
+/** 500%. */
+export const MAX_STEP = 500
 
 /** 100%. */
-export const DEFAULT_STEP = 20
+export const DEFAULT_STEP = 100
 
-/** Steps per unit of zoom: 1 step = 5%. */
-const STEPS_PER_UNIT = 20
+/** A step index *is* a percentage, so every value in the range is reachable. */
+const STEPS_PER_UNIT = 100
 
-/** One integer step index per slot. */
+/** One integer percent per slot. */
 export type ZoomSteps = Record<SlotId, number>
 
 /** The storage slice this module needs; `undefined` degrades to memory only. */
@@ -36,9 +36,9 @@ export function clampStep(value: number): number {
 }
 
 /**
- * Convert a step index into the CSS `zoom` factor. `21 / 20` stringifies to
+ * Convert a step index into the CSS `zoom` factor. `105 / 100` stringifies to
  * exactly `"1.05"`, so repeated same-value writes stay detectable.
- * @param step - integer step index.
+ * @param step - integer percent.
  * @returns the zoom factor as a number.
  */
 export function stepToZoom(step: number): number {
@@ -55,8 +55,9 @@ export function zoomToStep(zoom: number): number {
 }
 
 /**
- * A fresh 100% state: the three panes plus the right sidebar's second dock
- * column, which `ui-dockkit` can split out and which is otherwise unused.
+ * A fresh 100% state: the three panes and the floating preview plus the right
+ * sidebar's second dock column, which `ui-dockkit` can split out and which is
+ * otherwise unused.
  * @returns the default step per slot.
  */
 export function defaultSteps(): ZoomSteps {

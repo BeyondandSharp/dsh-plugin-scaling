@@ -10,7 +10,7 @@
 import { isExcludedSurface, slotForTarget } from './targets.ts'
 import type { SlotId } from './targets.ts'
 
-/** Wheel units that add up to one 5% step. */
+/** Wheel units that add up to one zoom step (5% of the current value at 100%). */
 export const UNITS_PER_STEP = 100
 
 /** Wheel units are dropped after this much idle time. */
