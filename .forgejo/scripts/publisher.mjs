@@ -85,10 +85,28 @@ export function npmVersion(run = spawnSync, env = process.env) {
   return match ? match[1] : String(result.stdout || '').trim();
 }
 
-/** The publish arguments. npm has no dirty-worktree check, so no extra flag. */
-export function publishArgs({ distTag = 'latest', access = 'public', dryRun = false, otp = '' } = {}) {
-  const args = ['publish', '--access', access, '--tag', distTag];
-  if (dryRun) args.push('--dry-run');
+/**
+ * The publish arguments.
+ *
+ * With a tarball, npm uploads that file and — unlike a directory publish — does
+ * not run the project's `prepublishOnly`. That is what the release wants: the
+ * tarball is the artifact Prepare already packed and hashed, and the Test/Build
+ * steps already ran, so `prepublishOnly` would only repeat them (and may need
+ * tooling this image does not have, e.g. a package manager with no lockfile to
+ * detect). npm has no dirty-worktree check, so no extra flag either.
+ */
+export function publishArgs({ distTag = 'latest', access = 'public', dryRun = false, otp = '', tarball = '' } = {}) {
+  const args = tarball ? ['publish', tarball] : ['publish'];
+  args.push('--access', access, '--tag', distTag);
+  if (dryRun) {
+    // npm >= 11 runs a package-existence check before publishing that stalls a
+    // rehearsal (measured on npm 12.2.0: `publish --dry-run` hangs with no output
+    // and no registry traffic, for a directory and a tarball alike, while
+    // `--dry-run --force` finishes in milliseconds). `--force` does not override
+    // `--dry-run`, so this still cannot write to the registry; the check is
+    // redundant here anyway because Preflight already compared the versions.
+    args.push('--dry-run', '--force');
+  }
   if (otp) args.push('--otp', otp);
   return args;
 }

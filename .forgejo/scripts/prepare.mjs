@@ -28,14 +28,23 @@ export function missingArtifacts(required, exists = existsSync) {
 /**
  * The tarball named by `pack --json`.
  *
- * npm prints an array whose first entry carries `filename`; `size` is usually
- * present, and the file on disk is measured when it is not.
+ * npm has printed this in three shapes over the years: an array of manifests
+ * (npm < 11), an object keyed by package name (npm >= 11, and by far the easiest
+ * to mistake for a single manifest), and a bare manifest. All three are accepted;
+ * `size` is usually present, and the file on disk is measured when it is not.
  */
 export function firstTarballFromPack(stdout, { stat = statSync } = {}) {
   const parsed = JSON.parse(stdout);
-  const manifest = Array.isArray(parsed) ? parsed[0] : parsed;
-  const filename = manifest?.filename || '';
-  let size = Number(manifest?.size || 0);
+  const entries = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === 'object'
+      ? parsed.filename
+        ? [parsed]
+        : Object.values(parsed)
+      : [];
+  const manifest = entries.find((entry) => entry && typeof entry === 'object' && entry.filename) || {};
+  const filename = manifest.filename || '';
+  let size = Number(manifest.size || 0);
   if (!size && filename) {
     try {
       size = stat(filename).size;

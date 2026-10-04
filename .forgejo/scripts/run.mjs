@@ -371,47 +371,82 @@ async function resolveNpmEndpoint(env) {
  * lockfile names has to exist. npm ships with the image and is checked above;
  * pnpm and yarn normally come from corepack, which the Node images bundle but
  * do not activate, so a bare `pnpm install` would die with ENOENT.
+ *
+ * `package.json`'s `packageManager` field is honoured too: a repository that
+ * declares pnpm there but commits no lockfile still gets pnpm, because its own
+ * scripts may call it.
  */
 async function ensureLockfileManager(env) {
   const { spawnSync } = await import('node:child_process');
   const dir = packageDir(env);
   const root = workspaceDir(env);
   if (!existsSync(join(dir, 'package.json'))) return 0;
-  const manager = packageManagerFor(dir, root);
-  if (manager === 'npm') {
+  const pkg = readPackageJson(dir);
+  const lockManager = packageManagerFor(dir, root);
+  const declared = declaredManager(pkg);
+  if (lockManager === 'npm') {
     process.stdout.write('依赖将用 npm 安装（package-lock.json 或没有锁文件）\n');
-    return 0;
   }
-  if (binaryOnPath(manager, env)) {
-    process.stdout.write(`${manager} 可用（锁文件要求用它安装依赖）\n`);
-    return 0;
+  if (declared && declared !== lockManager) {
+    process.stdout.write(`package.json 声明 packageManager: ${pkg.packageManager}\n`);
   }
+  // A lockfile makes its manager mandatory (install-deps cannot proceed without
+  // it); a bare `packageManager` declaration is only a hint — the project's own
+  // scripts may need it, but npm can still install and the run should not die
+  // over a missing convenience.
+  const required = new Set([lockManager].filter((manager) => manager && manager !== 'npm'));
+  const wanted = [...new Set([lockManager, declared])].filter((manager) => manager && manager !== 'npm');
 
   const hasCorepack =
     String(env.SKIP_TOOL_INSTALL || '').toLowerCase() !== 'true' &&
     spawnSync('sh', ['-c', 'command -v corepack'], { stdio: ['ignore', 'pipe', 'pipe'] }).status === 0;
-  if (hasCorepack) {
-    process.stdout.write(`PATH 上没有 ${manager}，尝试用 corepack 启用…\n`);
-    spawnSync('corepack', ['enable', manager], { stdio: ['ignore', 'inherit', 'inherit'] });
-    spawnSync('corepack', ['prepare', corepackPin(lockfileDir(dir, root) || dir, manager), '--activate'], {
-      stdio: ['ignore', 'inherit', 'inherit'],
-    });
+  for (const manager of wanted) {
     if (binaryOnPath(manager, env)) {
-      process.stdout.write(`已通过 corepack 启用 ${manager}\n`);
-      return 0;
+      process.stdout.write(`${manager} 可用\n`);
+      continue;
     }
-    process.stderr.write('corepack 启用失败。\n');
+    if (hasCorepack) {
+      process.stdout.write(`PATH 上没有 ${manager}，尝试用 corepack 启用…\n`);
+      spawnSync('corepack', ['enable', manager], { stdio: ['ignore', 'inherit', 'inherit'] });
+      spawnSync(
+        'corepack',
+        ['prepare', corepackPin(lockfileDir(dir, root) || dir, manager, pkg.packageManager), '--activate'],
+        { stdio: ['ignore', 'inherit', 'inherit'] },
+      );
+      if (binaryOnPath(manager, env)) {
+        process.stdout.write(`已通过 corepack 启用 ${manager}\n`);
+        continue;
+      }
+      process.stderr.write('corepack 启用失败。\n');
+    }
+    if (!required.has(manager)) {
+      process.stderr.write(
+        `警告：package.json 声明了 ${manager}，但 PATH 上没有它${hasCorepack ? '' : '（也没有可用的 corepack）'}；` +
+          `若项目脚本要用它，请在镜像里预装或改用自带它的镜像。\n`,
+      );
+      continue;
+    }
+    process.stderr.write(
+      `这个仓库的锁文件要求用 ${manager} 安装依赖，但 PATH 上没有它${hasCorepack ? '' : '，也没有可用的 corepack'}。\n` +
+        `  请改用自带 ${manager} 的镜像、在镜像里预装它，或删掉 ${manager} 锁文件改用 npm。\n`,
+    );
+    return 1;
   }
-
-  process.stderr.write(
-    `该仓库的锁文件要求用 ${manager} 安装依赖，但 PATH 上没有 ${manager}（也没有可用的 corepack）。\n` +
-      `  请改用自带 ${manager} 的镜像、在镜像里预装它，或删掉 ${manager} 锁文件改用 npm。\n`,
-  );
-  return 1;
+  return 0;
 }
 
-/** The corepack spec that matches the lockfile actually in the repository. */
-export function corepackPin(dir, manager = packageManagerFor(dir)) {
+/** The manager named by `package.json`'s `packageManager` field, or ''. */
+export function declaredManager(pkg) {
+  const spec = String(pkg?.packageManager || '').trim();
+  const name = spec.split('@')[0].trim();
+  return ['npm', 'pnpm', 'yarn'].includes(name) ? name : '';
+}
+
+/** The corepack spec that matches the declaration, else the lockfile in the repo. */
+export function corepackPin(dir, manager = packageManagerFor(dir), declared = '') {
+  // "pnpm@9.15.0" / "yarn@stable" already is a corepack spec.
+  const pinned = String(declared || '').trim();
+  if (pinned.includes('@', 1) && pinned.split('@')[0] === manager) return pinned;
   if (manager !== 'yarn') return `${manager}@latest`;
   try {
     // Yarn 1 writes "# yarn lockfile v1"; Berry (2+) writes __metadata:.
@@ -516,9 +551,35 @@ export async function dispatch(name, env = process.env) {
         return 0;
       }
       return runPackageScript('build', env);
+    case 'prepare':
+      // Publish always uploads the tarball Prepare made, so npm never runs the
+      // project's prepublishOnly itself. `prepack`/`prepare`/`postpack` still run
+      // inside `npm pack` below; this restores prepublishOnly for repositories
+      // that use it as a release gate.
+      if (shouldRunPrepublish(env)) {
+        process.stdout.write('RUN_PREPUBLISH_ONLY=true：打包前先执行项目自己的 prepublishOnly\n');
+        const code = await runPackageScript('prepublishOnly', env);
+        if (code !== 0) {
+          process.stderr.write(`prepublishOnly 以退出码 ${code} 结束，已中止发布\n`);
+          return code;
+        }
+      }
+      return runSubprocessProgram(name, env);
     default:
       return runSubprocessProgram(name, env);
   }
+}
+
+/**
+ * Should the project's own `prepublishOnly` be run explicitly before packing?
+ *
+ * Off by default: publishing the prepared tarball already skips it, the Test and
+ * Build steps ran the same commands, and that script is the one place a release
+ * most often reaches for tooling the image does not have. Turn it on for a
+ * repository that uses prepublishOnly as a real gate.
+ */
+export function shouldRunPrepublish(env = process.env) {
+  return String(env.RUN_PREPUBLISH_ONLY || '').toLowerCase() === 'true';
 }
 
 if (IS_DIRECT) {

@@ -47,8 +47,10 @@
 # login/publish) remain as explicit overrides.
 # SKIP_TOOL_INSTALL=true disables tool installation entirely.
 # GOPROXY (or GO_PROXY) is the Go module proxy for the project's build/test.
-# Dependencies/tests/build follow the repository's lockfile (npm, pnpm or yarn);
-# login, publish, version, pack and view always go through npm.
+# Dependencies/tests/build follow the repository's lockfile (npm, pnpm or yarn),
+# and package.json's packageManager field is honoured too; login, publish,
+# version, pack and view always go through npm. Publish uploads the tarball
+# Prepare built, so the project's prepublishOnly is not run a second time.
 
 name: npm-publish
 
@@ -115,7 +117,15 @@ jobs:
       SKIP_TEST: ${{ vars.SKIP_TEST }}
       SKIP_BUILD: ${{ vars.SKIP_BUILD }}
       SKIP_TOOL_INSTALL: ${{ vars.SKIP_TOOL_INSTALL }}
+      # Publish uploads the tarball Prepare packed, so npm never runs the
+      # project's own prepublishOnly (prepack/prepare/postpack do run, inside
+      # `npm pack`). Set RUN_PREPUBLISH_ONLY=true to run prepublishOnly yourself
+      # before packing — it then aborts the release when it fails.
+      RUN_PREPUBLISH_ONLY: ${{ vars.RUN_PREPUBLISH_ONLY }}
       RELEASE_DIST_TAG: ${{ vars.RELEASE_DIST_TAG }}
+      # Access level for the publish. package.json's publishConfig.access wins
+      # when it is set, then this variable, then the public default.
+      PUBLISH_ACCESS: ${{ vars.PUBLISH_ACCESS }}
       NPM_AUTH_WAIT_MINUTES: ${{ vars.NPM_AUTH_WAIT_MINUTES }}
       INPUT_VERSION: ${{ inputs.version }}
       INPUT_OTP: ${{ inputs.otp }}

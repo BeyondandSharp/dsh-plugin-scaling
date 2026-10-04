@@ -18,7 +18,7 @@
 // passed through on the first publish attempt for registries that only accept a
 // typed code.
 
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { buildPayload, deliver, errorSummary, isAuthUrl, readOptional } from './notify-lib.mjs';
@@ -57,11 +57,40 @@ export function redactSecrets(text, secrets = []) {
   return out;
 }
 
+/**
+ * The `--access` value for this publish.
+ *
+ * `package.json`'s `publishConfig.access` wins, so a repository that declares
+ * `restricted` is never published publicly by the Action's own default; an
+ * explicit `PUBLISH_ACCESS` overrides both, and anything else means the
+ * documented default of a public package.
+ */
+export function publishAccess(pkg, env = process.env) {
+  const override = readOptional(env.PUBLISH_ACCESS);
+  if (override === 'public' || override === 'restricted') return override;
+  const declared = String(pkg?.publishConfig?.access || '');
+  return declared === 'restricted' ? 'restricted' : 'public';
+}
+
+/** Did npm refuse because this exact version is already on the registry? */
+export function isPublishConflict(text) {
+  return /EPUBLISHCONFLICT|previously published versions|publish over the previously/i.test(String(text || ''));
+}
+
+/** Is exactly this version on the registry now? Confirms a concurrent publish. */
+export function versionOnRegistry(name, version, run = spawnSync) {
+  if (!name || !version) return false;
+  const result = run(BINARY, ['view', `${name}@${version}`, 'version', '--json'], { encoding: 'utf8' });
+  if (result.status !== 0) return false;
+  return String(result.stdout || '').includes(version);
+}
+
 async function main() {
   const temp = process.env.RUNNER_TEMP || '/tmp';
   const core = JSON.parse(readFileSync(join(temp, 'release.json'), 'utf8'));
   const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
   const state = { ...core, package: core.name || pkg.name };
+  const access = publishAccess(pkg);
   const waitMinutes = Number(process.env.NPM_AUTH_WAIT_MINUTES || 15);
   // One budget for the whole interaction, not one per wait: login, its polling
   // and the publish retry all draw from the same deadline, so the job can never
@@ -297,13 +326,41 @@ async function main() {
   }
 
   // --- 2. publish; npm authorises a second factor through doneUrl itself. ---
+  //
+  // Publish the tarball Prepare packed and hashed rather than the directory:
+  // a directory publish re-runs the project's `prepublishOnly`, which duplicates
+  // the Test/Build steps and can fail on tooling the image does not have (e.g. a
+  // package manager that no lockfile reveals). Falling back to the directory
+  // keeps `publish` usable on its own, without a preceding prepare.
+  const tarball = state.tarball && existsSync(state.tarball) ? state.tarball : '';
+  if (state.tarball && !tarball) {
+    process.stderr.write(`Prepare 记录的 ${state.tarball} 不存在，改用目录发布\n`);
+  }
+  process.stdout.write(
+    tarball ? `发布 Prepare 的产物：${tarball}\n` : '未找到 Prepare 的 tarball，按目录发布（会触发 prepublishOnly）\n',
+  );
   const attempt = await runNpm(
-    publishArgs({ distTag: state.distTag, dryRun: state.dryRun, otp: inputOtp }),
+    publishArgs({ distTag: state.distTag, access, dryRun: state.dryRun, otp: inputOtp, tarball }),
     { phase: 'npm-2fa', onAuthUrl: (url, publishPhase) => announce(url, publishPhase) },
   );
   if (attempt.failure) throw attempt.failure;
 
   if (attempt.code !== 0 && !state.dryRun) {
+    // Two runs of the same tag (or a retry after a partially-finished release) can
+    // both pass Preflight and then race for the same version; npm answers the
+    // loser with EPUBLISHCONFLICT. The version being live is exactly what this
+    // release wanted, so confirm it and treat the run as a no-op like the
+    // Preflight gate does — but never on a conflict for a *different* version.
+    if (isPublishConflict(attempt.captured) && versionOnRegistry(state.package, state.version)) {
+      process.stdout.write(
+        `registry 上已存在 ${state.package}@${state.version}（并发或重复发布），按已发布处理\n`,
+      );
+      if (process.env.GITHUB_OUTPUT) {
+        appendFileSync(process.env.GITHUB_OUTPUT, 'published=false\n');
+      }
+      return;
+    }
+
     const prose = parseNpmAuthOutput(attempt.captured);
     const tailUrl = findAuthUrl(attempt.captured) || (isAuthUrl(prose.url) ? prose.url : '');
     if (tailUrl) {

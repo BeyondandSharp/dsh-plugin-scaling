@@ -100,7 +100,7 @@ workflow 里除定位步骤外每一步都是一行（`配置里没有内嵌脚�
 | --- | --- |
 | 版本 | **npm ≥ 10.9**（官方 Node 22/24 镜像均满足）；低于此版本立刻失败并说明如何升级 |
 | 登录 | `npm login --auth-type=web`，一次性链接打印后 npm 自己轮询 `doneUrl` |
-| 发布 | `npm publish --access public --tag <t>`（可加 `--otp <code>`） |
+| 发布 | **上传 Prepare 打包并校验过的那个 tarball**：`npm publish <tarball> --access <级别> --tag <t>`（可加 `--otp <code>`）。`--access` 取自 `publishConfig.access`，其次是 `PUBLISH_ACCESS`，都没有才默认 `public`。npm 只对"目录发布"执行项目自己的 `prepublishOnly`，发 tarball 不会——避免把 Test/Build 再跑一遍，也避免它依赖 runner 里没有的工具；想让它照跑就设 `RUN_PREPUBLISH_ONLY=true`（见下） |
 | 二次验证 | npm 收到 `EOTP` 后打印 `authUrl`、轮询 `doneUrl`、拿到 token 后**自己重试**；脚本只负责转发网址 |
 | 凭据 | npm 自己写入 `~/.npmrc`；登录与发布是同一个 npm，不会冲突 |
 | 其它命令 | 版本对齐 `npm version`、打包 `npm pack --json`、查询 registry `npm view <pkg> versions dist-tags --json` |
@@ -116,7 +116,29 @@ workflow 里除定位步骤外每一步都是一行（`配置里没有内嵌脚�
 | `yarn.lock`（Berry） | `yarn install --immutable` | corepack 启用 `yarn@stable` |
 | `package-lock.json` / 没有锁文件 | `npm ci` / `npm install` | npm 由镜像提供，无需准备 |
 
+`package.json` 的 `packageManager` 字段也认：即使仓库没提交锁文件，只要声明了 `"packageManager": "pnpm@9.x"`，`Ensure container tools` 就会按这个版本用 corepack 启用它（项目脚本可能直接调用它）；万一镜像没有 corepack，只**警告**不中断（锁文件要求的那种才是硬失败）。
+
 corepack 缺失（较新的 Node 镜像已不再内置）或启用失败时，`Ensure container tools` **直接失败并给出处理办法**，不会等到 `install-deps` 抛 `ENOENT`。设 `SKIP_TOOL_INSTALL=true` 可完全关闭这些自动准备（离线镜像自行预装时用）。corepack 取版本、pnpm/yarn 下载依赖都要出网，分别走 `HTTPS_PROXY` 与 `NPM_CONFIG_PROXY`。
+
+### 项目自己的 npm 生命周期钩子，谁跑谁不跑
+
+实测（npm 10 与 12 行为一致）：
+
+| 命令 | 运行的钩子 |
+| --- | --- |
+| `npm pack`（**Prepare 步骤执行**） | `prepack` → `prepare` → `postpack` |
+| `npm publish`（目录发布） | `prepublishOnly` → `prepack` → `prepare` → `postpack` → `publish` → `postpublish` |
+| `npm publish <tarball>`（**本 Action 的发布方式**） | 无 |
+
+所以：**准备包内容的钩子（`prepack`/`prepare`）照旧会跑**，跑在 Prepare 打包那一次；被跳过的只有 `prepublishOnly`（以及 `publish`/`postpublish`，和 prepack/prepare/postpack 的"第二遍"）。
+
+这么做的原因：
+
+- 发布的就是 Prepare **打包并记录 sha256** 的那个文件，内容与校验一致；目录发布会现场重新打包，第二次 `prepare` 可能改掉产物，哈希就对不上了；
+- `prepublishOnly` 按 npm 自己的定位是"发布前的检查/测试钩子"（官方文档明确不建议用它准备包内容），而本 Action 的 Test/Build 步骤已经跑过同样的事；
+- 它也是唯一会因为 runner 里缺少某个工具而炸掉发布的地方（典型：脚本里写死 `pnpm`，仓库却没有锁文件/`packageManager` 可供 Action 准备）。
+
+需要它照跑时：设 `RUN_PREPUBLISH_ONLY=true`，Action 会用仓库的包管理器在**打包前**执行 `prepublishOnly`，失败即中止发布（顺序与 npm 目录发布一致：钩子 → 打包）。
 
 ### 代理、镜像与 registry（内网怎么接）
 
@@ -243,9 +265,11 @@ dist-tag 默认：正式版 `latest`，含 `-` 的预发布版 `next`；可用�
 | `REQUIRED_ARTIFACTS` | 空（不检查） | 构建产物必含清单，逗号分隔、**相对 package 目录**（monorepo 下设了 `PKG_TARGET_DIR` 就相对那个子目录），两侧空格会被忽略，例如 `lib/index.js,lib/client.js,cordis.patch.yml`。**在 Build 之后、npm pack 之前**校验；留空表示不检查（模板不预设任何项目专属路径） |
 | `PKG_TARGET_DIR` | 空 | monorepo 子目录，例如 `packages/plugin` |
 | `SKIP_TEST` / `SKIP_BUILD` | 空 | `true` 跳过测试 / 构建（无 build 脚本时自动跳过） |
+| `RUN_PREPUBLISH_ONLY` | 空（不跑） | `true` 时在**打包前**先执行项目自己的 `prepublishOnly`（用仓库的包管理器，失败即中止发布）。默认不跑：发布的是 Prepare 的 tarball，而 `prepack`/`prepare`/`postpack` 仍由 `npm pack` 正常执行 |
 | `SKIP_TOOL_INSTALL` | 空 | `true` 时 `Ensure container tools` 不安装任何东西（离线镜像已预装时用） |
 | `PKG_MANAGER` | 空 | 强制 `apk`/`apt-get`/`yum`/`dnf`/`microdnf`，跳过自动探测 |
 | `RELEASE_DIST_TAG` | 空 | 固定 dist-tag |
+| `PUBLISH_ACCESS` | 空 | `public` / `restricted`，覆盖发布级别。默认取 `publishConfig.access`，都没有才 `public`（仓库声明 `restricted` 时不会被本 Action 擅自公开） |
 | `NPM_AUTH_WAIT_MINUTES` | `15` | **整个认证过程的总预算**（登录 + 二次验证 + 重试共用同一个 deadline），超时后推送失败通知；不是每一步各算一次 |
 | `APT_PROXY` / `NPM_PROXY` | 空 | 内网端点：**自动判别**是真代理还是镜像/registry，见「代理、镜像与 registry」。例：`APT_PROXY=https://apt.internal` |
 | `ALL_PROXY` / `HTTP_PROXY` / `HTTPS_PROXY` / `NPM_CONFIG_PROXY` | 空 | 真正的 HTTP 转发代理（不参与判别） |
@@ -413,6 +437,9 @@ node -e "import('/absolute/path/to/.forgejo/scripts/notify-lib.mjs').then((lib) 
 | `找不到 npm` / `npm 10.x 低于 10.9.0` | 换用官方 Node 镜像（自带 npm），或在镜像里预装较新的 npm |
 | apk/apt/yum 报 `unable to select packages`、`Could not connect`、`HTTP 404/308` | 多半是把**镜像站**当成了代理。apk/yum 镜像填 `APK_REPO` / `YUM_REPO`，apt 镜像填 `APT_PROXY`（会自动识别，见「代理、镜像与 registry」）；真要给 apk/yum 配代理就用通用的 `HTTP_PROXY`/`HTTPS_PROXY` |
 | `该仓库的锁文件要求用 pnpm/yarn 安装依赖…` | 镜像里没有该包管理器也没有 corepack。换用自带它的镜像、在镜像里预装，或删掉对应锁文件改用 npm |
+| 两个 run 同时发同一个 tag，后者报 `EPUBLISHCONFLICT` | 正常竞态：Preflight 都通过了，谁先发谁赢。Action 会向 registry 核对这个版本确实已经在线上，然后**按已发布处理**（绿），不会把并发的后一棒判红；只有冲突的不是本次版本时才失败 |
+| `registry 对 <包> 返回空结果` | 第三方 registry 的已知行为（npm/cli#6408：包在，但 `npm view` 什么都不输出）。Action 会改用 `npm view <包>@<dist-tag> version` 再确认一次，仍拿不到就按首次发布继续，发布本身是最后一道保险 |
+| 发布时 `sh: pnpm: not found`、`npm error code 127` | 这是**项目自己的脚本**（通常是 `prepublishOnly`）调用了 runner 里没有的命令。发布走的是 Prepare 的 tarball，本就**不会**触发 `prepublishOnly`；若仍报错说明 Test/Build 脚本里也调了它 —— 在该仓库 `package.json` 加 `"packageManager": "pnpm@<版本>"`（Action 会用 corepack 装上），或把脚本改成用 npm |
 | `npm 无法完成二次验证，也没有给出可网页完成的链接` | 镜像缺 `script(1)`（装 util-linux）、npm 太旧、或该 registry 只认手输验证码（用 dispatch 的 `otp` 输入） |
 | `授权链接投递失败` | webhook 地址 / token 配错。人工没有链接就无法完成认证，所以默认让 job 失败；确认接收端可用后可临时设 `NOTIFY_REQUIRED=false` |
 | `版本必须严格大于 registry 上的 latest` | tag 版本比 npm 上的旧；删掉 tag 换新版本，或确认是否想重发 |

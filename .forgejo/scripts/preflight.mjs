@@ -22,10 +22,48 @@ export function npmView(name, run = spawnSync) {
     const stderr = String(result.stderr || '');
     return { ok: false, notFound: /\bE404\b|404 Not Found/i.test(stderr), stderr };
   }
+  const text = String(result.stdout || '').trim();
+  // npm exits 0 with nothing on stdout when the package exists but the requested
+  // fields are empty — a third-party registry without a `latest` tag does this
+  // (npm/cli#6408). That is not a failed lookup: the caller retries with the tag.
+  if (text === '') return { ok: true, notFound: false, empty: true, value: normalizeView(undefined), stderr: '' };
   try {
-    return { ok: true, notFound: false, value: normalizeView(JSON.parse(result.stdout)), stderr: '' };
+    return { ok: true, notFound: false, empty: false, value: normalizeView(parseJsonOutput(text)), stderr: '' };
   } catch {
-    return { ok: false, notFound: false, stderr: `无法解析 npm view 输出：${String(result.stdout || '').slice(0, 200)}` };
+    return { ok: false, notFound: false, stderr: `无法解析 npm view 输出：${text.slice(0, 200)}` };
+  }
+}
+
+/**
+ * Parse piped JSON that npm may have mixed with human-readable lines.
+ *
+ * npm is not guaranteed to print *only* JSON: warnings and progress lines have
+ * been observed alongside it, and a strict `JSON.parse` then throws on a lookup
+ * that actually succeeded. The first JSON object (or array) in the text wins.
+ */
+export function parseJsonOutput(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = /(\{[\s\S]*\}|\[[\s\S]*\])/.exec(text);
+    if (!match) throw new Error('no JSON in output');
+    return JSON.parse(match[1]);
+  }
+}
+
+/** What one dist-tag points at, or '' — the fallback for an empty `npm view`. */
+export function npmViewTagVersion(name, tag, run = spawnSync) {
+  const spec = tag ? `${name}@${tag}` : name;
+  const result = run(NPM, ['view', spec, 'version', '--json'], { encoding: 'utf8' });
+  if (result.status !== 0) return '';
+  const text = String(result.stdout || '').trim();
+  if (text === '') return '';
+  try {
+    const parsed = parseJsonOutput(text);
+    const value = Array.isArray(parsed) ? parsed[0] : parsed;
+    return typeof value === 'string' ? value.trim() : '';
+  } catch {
+    return '';
   }
 }
 
@@ -187,24 +225,36 @@ async function main() {
     }
   }
 
+  const noOpAlreadyPublished = () => {
+    // Idempotent no-op: the version is already live, so this is a success and
+    // deliberately silent — re-triggering a tag must not spam the chat. The
+    // workflow gates the remaining release steps on this output.
+    process.stdout.write(`registry 上已存在 ${pkg.name}@${core.version}，本次为空操作\n`);
+    writeFileSync(corePath, JSON.stringify(state, null, 2));
+    if (process.env.GITHUB_OUTPUT) {
+      appendFileSync(process.env.GITHUB_OUTPUT, `already_published=true\nname=${pkg.name}\n`);
+    }
+    process.exit(0);
+  };
+
   const view = npmView(pkg.name);
   if (!view.ok && view.notFound) {
     process.stdout.write(`registry 上查不到 ${pkg.name}，按首次发布处理\n`);
   } else if (!view.ok) {
     fail(`查询 registry 失败，无法确认 ${pkg.name}@${core.version} 是否已发布：${view.stderr || '未知错误'}`);
+  } else if (view.empty) {
+    // The registry answered, but with nothing useful. Asking the configured tag
+    // directly still catches the idempotent case; without it there is no reliable
+    // "latest" to compare against, so the release continues as a first publish
+    // and the publish itself stays the final guard.
+    const tagged = npmViewTagVersion(pkg.name, core.distTag);
+    if (tagged && tagged === core.version) noOpAlreadyPublished();
+    process.stdout.write(
+      `registry 对 ${pkg.name} 返回空结果${tagged ? `（${core.distTag} 指向 ${tagged}）` : ''}；无法核对版本高低，按首次发布继续\n`,
+    );
   } else {
     const versions = publishedVersions(view) || [];
-    if (versions.includes(core.version)) {
-      // Idempotent no-op: the version is already live, so this is a success and
-      // deliberately silent — re-triggering a tag must not spam the chat. The
-      // workflow gates the remaining release steps on this output.
-      process.stdout.write(`registry 上已存在 ${pkg.name}@${core.version}，本次为空操作\n`);
-      writeFileSync(corePath, JSON.stringify(state, null, 2));
-      if (process.env.GITHUB_OUTPUT) {
-        appendFileSync(process.env.GITHUB_OUTPUT, `already_published=true\nname=${pkg.name}\n`);
-      }
-      process.exit(0);
-    }
+    if (versions.includes(core.version)) noOpAlreadyPublished();
     const latest = latestVersion(view, versions);
     if (latest && !semverGt(core.version, latest)) {
       fail(`版本必须严格大于 registry 上的 latest：${core.version} 不大于 ${latest}`);
